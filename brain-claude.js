@@ -983,11 +983,11 @@ function claudeGenerate(systemPrompt, userPrompt, opts = {}) {
         // 배포본은 시스템 node 가 없을 수 있어 Electron 내장 node(process.execPath)+ELECTRON_RUN_AS_NODE 로 실행.
         const mcpEnv = { AUXO_DATA_PATH: opts.dataPath || '', AUXO_AGENT_ID: String(opts.agentId) };
         if (process.env.AUXO_MCP_ELECTRON) mcpEnv.ELECTRON_RUN_AS_NODE = '1';
-        const cfg = { mcpServers: { auxo: {
-          command: process.env.AUXO_MCP_NODE || 'node',
-          args: [path.join(__dirname, 'auxo-mcp-tools.js')],
-          env: mcpEnv,
-        } } };
+        // auxo 내장 도구: engine이 상시 게이트웨이 URL(opts.auxoHttp)을 주면 그걸 쓴다(매턴 stdio 스폰
+        // 레이스로 도구가 안 붙던 '거짓무능' 제거). 없으면 기존처럼 stdio 로 직접 spawn(폴백).
+        const cfg = { mcpServers: { auxo: opts.auxoHttp
+          ? { type: 'http', url: opts.auxoHttp }
+          : { command: process.env.AUXO_MCP_NODE || 'node', args: [path.join(__dirname, 'auxo-mcp-tools.js')], env: mcpEnv } } };
         // P0-b: 사용자가 설치한 MCP(브라우저·구글 등)도 claude에 연결 + 허용. strict-mcp-config라 여기 명시한 것만 보임.
         // ★상시 게이트웨이(opts.mcpHttp) 우선: 매 턴 stdio spawn하면 느린 서버가 pending인 채 지나가 도구가 안 붙음(2026-07-14 확증).
         //   engine이 미리 띄워둔 로컬 HTTP MCP 게이트웨이 URL로 주면 즉시 connected. 없을 때만 기존 stdio 직접(폴백).
@@ -1047,6 +1047,11 @@ function claudeGenerate(systemPrompt, userPrompt, opts = {}) {
             if (!line) continue;
             let o; try { o = JSON.parse(line); } catch (_) { continue; }
             const ev = (o && o.type === 'stream_event') ? o.event : null;
+            // 새 텍스트 블록 시작(도구 호출 사이/뒤 문구) — 이미 출력한 텍스트가 있으면 문단 구분을 넣어
+            // "…열어볼게요.두 곳은…" 처럼 블록이 붙어버리는 run-on 을 방지한다.
+            if (ev && ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'text' && acc.trim()) {
+              acc += '\n\n'; try { opts.onDelta('\n\n'); } catch (_) {}
+            }
             if (ev && ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta' && ev.delta.text) {
               acc += ev.delta.text; try { opts.onDelta(ev.delta.text); } catch (_) {}
             }

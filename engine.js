@@ -595,10 +595,20 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
     : undefined;
   // 구독 두뇌(claude·codex): 설치 MCP를 상시 HTTP 게이트웨이로 노출해 매턴 spawn 레이스(pending) 제거.
   // REST 두뇌는 mcpManager 직접 호출이라 불필요. antigravity는 우리 MCP 미지원이라 제외.
-  let mcpHttp;
+  let mcpHttp, auxoHttp;
   if (subDelegate) {
-    try { mcpHttp = await mcpGateway.ensureGateways(agentId, path.dirname(storage.getDataPath())); }
+    const _dp = path.dirname(storage.getDataPath());
+    try { mcpHttp = await mcpGateway.ensureGateways(agentId, _dp); }
     catch (e) { console.error('[engine] mcp-gateway 준비 실패:', e && e.message); }
+    // 내장 auxo 도구도 상시 게이트웨이로 warm → 매턴 stdio 스폰 레이스(=거짓무능) 제거. 실패 시 brain이 stdio 폴백.
+    try {
+      auxoHttp = await mcpGateway.ensureAuxoGateway(agentId, {
+        id: 'auxo',
+        command: process.env.AUXO_MCP_NODE || 'node',
+        args: [path.join(__dirname, 'auxo-mcp-tools.js')],
+        env: { AUXO_DATA_PATH: _dp, AUXO_AGENT_ID: String(agentId), ...(process.env.AUXO_MCP_ELECTRON ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
+      });
+    } catch (e) { console.error('[engine] auxo 게이트웨이 준비 실패(→stdio 폴백):', e && e.message); }
   }
   // 실시간 스트리밍이 이미 나간 뒤엔 재시도하면 화면에 답이 두 번 그려진다 → 델타 방출 여부를 센다.
   // + 정지 시 부분 답변을 보존하려고 스트리밍된 텍스트를 누적한다(_streamed).
@@ -632,6 +642,7 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
         attachments: (Array.isArray(attachments) && attachments.length) ? attachments : undefined, // 파일 첨부(멀티모달) — 채널이 file-intake 로 만든 것
         imageFiles: (imageFiles && imageFiles.length) ? imageFiles : undefined, // claude 구독 비전(native Read로 이미지 파일 보기)
         mcpHttp: (mcpHttp && mcpHttp.length) ? mcpHttp : undefined, // 구독 두뇌: 설치 MCP 상시 HTTP 게이트웨이 URL 목록
+        auxoHttp,  // 구독 두뇌: 내장 auxo 도구 상시 게이트웨이 URL(있으면 stdio 대신 사용, 없으면 stdio 폴백)
 
         onDelta: _onDelta,  // 실시간 스트리밍(지원 두뇌만). 채널이 콜백 주입(앱=chat:stream), 미지정 시 최종 일괄.
         agentId, dataPath: path.dirname(storage.getDataPath()), // claude·codex 구독용(MCP 서버 주입) — 폴더 경로

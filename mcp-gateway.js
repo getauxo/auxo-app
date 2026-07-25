@@ -82,10 +82,24 @@ async function ensureGateways(agentId, dataDir) {
   return out;
 }
 
+/**
+ * 내장 auxo 도구(파일·기억·전송 등)도 상시 HTTP 게이트웨이로 보장.
+ * 기존엔 구독 두뇌가 매 턴 auxo를 stdio로 새로 spawn → sqlite 초기화가 느리면 준비 전 턴이 지나가
+ * 도구가 안 붙음(=거짓무능). 여기서 한 번 warm 해두고 URL을 주면 즉시 connected.
+ * @param {object} auxoServer { id:'auxo', command, args, env }
+ * @returns {Promise<string>} 로컬 HTTP MCP URL. (실패 시 throw → 호출부가 stdio 폴백)
+ */
+async function ensureAuxoGateway(agentId, auxoServer) {
+  const key = `${agentId}::${auxoServer.id}`;
+  let g = gateways.get(key);
+  if (!g) { g = await _startGateway(agentId, auxoServer); gateways.set(key, g); }
+  return g.url;
+}
+
 /** 앱 종료 시 정리. */
 function shutdown() {
   for (const g of gateways.values()) { try { g.httpServer.close(); } catch (_) {} }
   gateways.clear();
 }
 
-module.exports = { ensureGateways, shutdown };
+module.exports = { ensureGateways, ensureAuxoGateway, shutdown };

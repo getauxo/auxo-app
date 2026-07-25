@@ -87,13 +87,19 @@ function codexGenerate(systemPrompt, userPrompt, opts = {}) {
       // 배포본은 시스템 node 가 없을 수 있어 Electron 내장 node(process.execPath)로 실행.
       const nodeBin = (process.env.AUXO_MCP_NODE || 'node').replace(/\\/g, '/');
       // TOML literal(작은따옴표): Windows shell:true 의 cmd 가 큰따옴표를 벗기는 문제 회피.
-      args.push(
-        '-c', `mcp_servers.auxo.command='${nodeBin}'`,
-        '-c', `mcp_servers.auxo.args=['${mcpJs}']`,
-        '-c', `mcp_servers.auxo.env.AUXO_DATA_PATH='${dp}'`,
-        '-c', `mcp_servers.auxo.env.AUXO_AGENT_ID='${opts.agentId}'`,
-      );
-      if (process.env.AUXO_MCP_ELECTRON) args.push('-c', "mcp_servers.auxo.env.ELECTRON_RUN_AS_NODE='1'");
+      // auxo 내장 도구: engine이 상시 게이트웨이 URL(opts.auxoHttp)을 주면 그걸 쓴다(매턴 stdio 스폰
+      // 레이스로 도구가 안 붙던 '거짓무능' 제거). 없으면 기존처럼 stdio 직접 spawn(폴백).
+      if (opts.auxoHttp) {
+        args.push('-c', `mcp_servers.auxo.url='${String(opts.auxoHttp).replace(/'/g, '')}'`);
+      } else {
+        args.push(
+          '-c', `mcp_servers.auxo.command='${nodeBin}'`,
+          '-c', `mcp_servers.auxo.args=['${mcpJs}']`,
+          '-c', `mcp_servers.auxo.env.AUXO_DATA_PATH='${dp}'`,
+          '-c', `mcp_servers.auxo.env.AUXO_AGENT_ID='${opts.agentId}'`,
+        );
+        if (process.env.AUXO_MCP_ELECTRON) args.push('-c', "mcp_servers.auxo.env.ELECTRON_RUN_AS_NODE='1'");
+      }
       // P0-b: 사용자가 설치한 MCP(브라우저·구글 등)도 codex에 연결(codex는 bypass라 별도 허용 불필요).
       // ★상시 게이트웨이(opts.mcpHttp) 우선: 매 턴 stdio spawn하면 느린 서버가 준비 전에 지나가 도구가 안 붙음(2026-07-14 확증).
       //   engine이 띄워둔 로컬 HTTP MCP 게이트웨이 URL로 주면 즉시 연결. 없을 때만 stdio 직접(폴백).

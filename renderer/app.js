@@ -895,6 +895,8 @@ function queueMessage(text, atts) {
   if (strip) {
     const pill = document.createElement('div');
     pill.className = 'queued-pill';
+    const tag = document.createElement('span');
+    tag.className = 'queued-tag'; tag.textContent = '⏳ 대기 중';
     const label = document.createElement('span');
     label.className = 'queued-text';
     label.textContent = text || (atts.length ? `첨부 ${atts.length}개` : '');
@@ -906,7 +908,7 @@ function queueMessage(text, atts) {
       pill.remove();
       if (!_queue.length) strip.classList.add('hidden');
     });
-    pill.appendChild(label); pill.appendChild(x);
+    pill.appendChild(tag); pill.appendChild(label); pill.appendChild(x);
     strip.appendChild(pill);
     strip.classList.remove('hidden');
     item.el = pill;
