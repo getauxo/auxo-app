@@ -27,7 +27,7 @@ AI 에이전트는 점점 똑똑해지는데, 개발을 모르면 선뜻 다가�
 
 세 단계면 시작입니다.
 
-1. **내려받기** — Windows용 설치 파일 (macOS 버전은 준비 중입니다)
+1. **[내려받기](https://getauxo.app/download.html)** — Windows용 설치 파일 (macOS 버전은 준비 중입니다)
 2. 설치 후 실행 → 쓰고 싶은 AI 모델 선택 (구독 또는 API 키)
 3. 에이전트 이름을 지어주고 대화 시작
 
@@ -35,6 +35,11 @@ AI 에이전트는 점점 똑똑해지는데, 개발을 모르면 선뜻 다가�
 
 - Windows 10 / 11 (64비트) — macOS 버전은 준비 중입니다.
 - AI 모델 연결: 구독(Claude·ChatGPT 등) 또는 API 키 중 하나
+
+## 링크
+
+- 홈페이지·내려받기: https://getauxo.app
+- 문의: hello@getauxo.app
 
 ## 개인정보
 

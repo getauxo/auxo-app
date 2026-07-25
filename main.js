@@ -143,7 +143,7 @@ function createWindow(show = true) {
 
   // 외부 링크(target=_blank·window.open)는 앱 안 팝업창이 아니라 기본 브라우저로 연다.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:\/\//i.test(url)) { try { shell.openExternal(url); } catch (_) {} }
+    if (/^(https?:\/\/|mailto:)/i.test(url)) { try { shell.openExternal(url); } catch (_) {} }
     return { action: 'deny' };
   });
 
@@ -152,7 +152,7 @@ function createWindow(show = true) {
   // 외부 http(s) 는 기본 브라우저로 넘긴다(setWindowOpenHandler 와 동일 정책).
   mainWindow.webContents.on('will-navigate', (e, url) => {
     e.preventDefault();
-    if (/^https?:\/\//i.test(url)) { try { shell.openExternal(url); } catch (_) {} }
+    if (/^(https?:\/\/|mailto:)/i.test(url)) { try { shell.openExternal(url); } catch (_) {} }
   });
 
   mainWindow.loadFile('renderer/index.html');
