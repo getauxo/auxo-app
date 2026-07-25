@@ -1,0 +1,93 @@
+{
+  "name": "auxo",
+  "productName": "Auxo",
+  "version": "0.1.0",
+  "description": "Auxo — 나를 알아가고, 필요할 때 도와주는 AI 친구. 설치형 데스크톱 앱. 데이터 폴더는 dev·배포 모두 %APPDATA%/Auxo (productName 기준).",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "cli": "node cli.js",
+    "bot": "node bot-telegram.js",
+    "roundtrip": "node roundtrip-test.js",
+    "screenshot": "electron . --smoke",
+    "prepare-model": "node prepare-model.js",
+    "pack": "npm run prepare-model && electron-builder --dir",
+    "dist": "npm run prepare-model && electron-builder",
+    "verify:dist": "node verify-dist.js",
+    "release": "node release.js"
+  },
+  "keywords": [],
+  "author": "Auxo",
+  "license": "MIT",
+  "build": {
+    "appId": "com.auxo.app",
+    "productName": "Auxo",
+    "asar": false,
+    "icon": "icon.png",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!evidence/**",
+      "!release-staging/**",
+      "!**/*-test.js",
+      "!test-*.js",
+      "!smoke*.js",
+      "!mcp-spike*.js",
+      "!roundtrip-test.js",
+      "!verify-dist.js",
+      "!release.js",
+      "!notice.json",
+      "!uninstall-template.bat",
+      "!.patch-backup-*/**",
+      "!*.bak-*",
+      "!_migtest.js",
+      "!*-api-key",
+      "!*-key",
+      "!*-token",
+      "!office-token",
+      "!.env",
+      "!*api-key*.txt",
+      "!gemini-api-key.txt",
+      "!cli-test-*/**",
+      "!*-test-*/**",
+      "!smoke-data/**",
+      "!_t/**",
+      "!*.분신.json",
+      "!*.backup-*.json",
+      "!**/*.log",
+      "!_t/**",
+      "!**/onnxruntime-web/**",
+      "!**/@huggingface/transformers/.cache/**",
+      "!**/onnxruntime-node/bin/napi-v6/darwin/**",
+      "!**/onnxruntime-node/bin/napi-v6/linux/**",
+      "!**/onnxruntime-node/bin/napi-v6/win32/arm64/**"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "discord.js": "^14.26.4",
+    "dotenv": "^17.4.2",
+    "node-sqlite3-wasm": "^0.8.59",
+    "ogg-opus-decoder": "^1.7.3",
+    "yauzl": "^2.10.0"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.0.3",
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  }
+}

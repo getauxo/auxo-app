@@ -1,0 +1,54 @@
+# ── 의존성·빌드 산출물 ─────────────────────────────
+node_modules/
+dist/
+dist-pkg/
+*.zip
+
+# ── 민감 정보 (절대 커밋 금지) ─────────────────────
+.env
+gemini-api-key.txt
+*token*
+telegram-bot.json
+discord-bot.json
+office-token
+*.분신.json
+oauth*.json
+*-creds.json
+
+# ── 런타임 데이터·사용자 데이터·로그 ───────────────
+*.log
+evidence/
+skills/
+mcp-servers.json
+agentlink-data*.json
+*.backup*
+download/
+outbox-*.json
+
+# ── 상대경로 별칭버그로 생긴 잔재 폴더 ─────────────
+/~/
+/바탕화면/
+
+# ── 개발용 테스트·스파이크·진단 스크립트 (repo 미포함, 로컬 전용) ──
+test-*.js
+*-test.js
+smoke*.js
+mcp-spike*.js
+roundtrip-test.js
+diag-*.js
+_migtest.js
+
+# ── OS·에디터 ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+.patch-backup-*/
+
+# 개발용 CLI 테스트 데이터 폴더
+cli-test-*/
+
+# 로컬 임베딩 모델(약 189MB) — git 에 넣으면 repo 가 비대해지고 clone 이 느려진다.
+# 설치본에는 포함된다(package.json build.files 의 **/*). 준비: npm run prepare-model (pack/dist 가 자동 실행)
+models/
+
+# 배포 자산 staging (릴리스에 수동 업로드, 커밋 안 함)
+release-staging/
