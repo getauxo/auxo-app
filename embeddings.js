@@ -109,7 +109,9 @@ function _getLocalEmbedder() {
             // 없으면(개발 중 등) 기존대로 원격에서 받는다. 준비=`npm run prepare-model`(dist 시 자동).
             try {
               const path = require('path'), fs = require('fs');
-              const dir = path.join(__dirname, 'models');
+              // 배포(asar)에서 모델은 app.asar.unpacked 에 풀린다. 네이티브 onnxruntime는
+              // asar 가상경로를 못 읽으므로 실제 경로(unpacked)로 바꿔준다. (dev에선 그대로)
+              const dir = path.join(__dirname, 'models').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
               if (fs.existsSync(path.join(dir, ...LOCAL_EMBED_MODEL.split('/'), 'config.json'))) {
                 m.env.localModelPath = dir;
                 m.env.allowLocalModels = true;

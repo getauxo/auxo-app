@@ -22,7 +22,15 @@
   "build": {
     "appId": "com.auxo.app",
     "productName": "Auxo",
-    "asar": false,
+    "asar": true,
+    "asarUnpack": [
+      "models/**",
+      "**/node_modules/onnxruntime-node/**",
+      "**/node_modules/node-sqlite3-wasm/**",
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**",
+      "**/*.node"
+    ],
     "icon": "icon.png",
     "directories": {
       "output": "dist"
