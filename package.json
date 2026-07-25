@@ -71,7 +71,10 @@
       "!**/@huggingface/transformers/.cache/**",
       "!**/onnxruntime-node/bin/napi-v6/darwin/**",
       "!**/onnxruntime-node/bin/napi-v6/linux/**",
-      "!**/onnxruntime-node/bin/napi-v6/win32/arm64/**"
+      "!**/onnxruntime-node/bin/napi-v6/win32/arm64/**",
+      "!**/onnxruntime-node/**/DirectML.dll",
+      "!**/onnxruntime-node/**/dxcompiler.dll",
+      "!**/onnxruntime-node/**/dxil.dll"
     ],
     "win": {
       "target": "nsis",
