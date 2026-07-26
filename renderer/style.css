@@ -1171,19 +1171,7 @@ select option { background: var(--bg-elev); color: var(--text-main); }
 .stopped-tag { color: var(--text-faint, #8a8a94); font-size: 12px; margin-left: 6px; }
 
 /* 생성 중 후속 메시지 대기열(큐잉) — 입력창 위 대기 pill 들. 현재 답변 끝나면 순차 전송. */
-.queued-strip { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 2px 0; }
-.queued-strip.hidden { display: none; }
-.queued-pill {
-  display: inline-flex; align-items: center; gap: 7px; max-width: 300px;
-  padding: 5px 8px 5px 11px;
-  background: var(--accent-soft, rgba(99,102,241,0.12));
-  border: 1px solid var(--accent-border, rgba(99,102,241,0.30));
-  border-radius: var(--radius-pill, 999px); font-size: 12.5px; color: var(--text-main, #e8e8ef);
-}
-.queued-pill .queued-tag { color: var(--accent-fg, #818cf8); font-weight: 700; white-space: nowrap; }
-.queued-pill .queued-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
-.queued-pill .queued-x { border: none; background: transparent; color: var(--text-sub, #b5b5be); cursor: pointer; font-size: 16px; line-height: 1; padding: 0 2px; }
-.queued-pill .queued-x:hover { color: var(--text-main, #fff); }
+/* (큐 대기 알약 UI 제거됨 — 생성 중 보낸 메시지는 버블로 바로 표시 후 다음 턴에 순차 처리) */
 
 /* 드래그드롭 중 하이라이트 — 파일을 채팅으로 끌어오면 입력 영역을 강조. */
 #screen-chat.drag-over .chat-input-area {

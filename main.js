@@ -351,11 +351,11 @@ async function runSmokeScreenshot() {
     wizExec: "setTimeout(function(){ var m=document.getElementById('chat-messages'); if(!m) return; m.scrollTop=0; m.dispatchEvent(new Event('scroll')); setTimeout(function(){ m.scrollTop=0; }, 600); }, 400);",
   });
 
-  // ── 스크린샷 chat-stop: 생성 중 전송 버튼(↑)→정지(■) + 후속 메시지 큐잉 pill 렌더 검증 ──
+  // ── 스크린샷 chat-stop: 생성 중 전송 버튼(↑)→정지(■) 렌더 검증 (큐잉 pill은 기능 제거로 삭제) ──
   await captureScreen({
     evidenceDir, agentId, smokeTarget: 'chat',
     outFile: 'screenshot-chat-stop.png', waitMs: 1200,
-    wizExec: "setTimeout(function(){ try{ setGenerating(true, 'smoke-agent-001'); queueMessage('이건 대기 중인 후속 메시지예요', []); }catch(e){} }, 300);",
+    wizExec: "setTimeout(function(){ try{ setGenerating(true, 'smoke-agent-001'); }catch(e){} }, 300);",
   });
 
   // ── 스크린샷 chat-dragover: 파일 드래그 중 입력영역 하이라이트 렌더 검증 ──

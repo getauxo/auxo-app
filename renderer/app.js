@@ -8,7 +8,7 @@ let currentAgent = null;
 let pendingAttachments = []; // [{mimeType, data(base64), name}]
 let _generating = false;     // 응답 생성(대기) 중인지 — 정지 버튼/ESC 제어용
 let _stopAgentId = null;     // 정지 대상 agentId
-let _queue = [];             // 생성 중 보낸 후속 메시지 대기열 [{text, atts, el}] — 현재 턴 끝나면 순차 처리
+let _queue = [];             // 생성 중 보낸 후속 메시지 직렬화 큐 [{text, atts}] — 현재 턴 끝나면 순차 처리(UI 표시 없음)
 const DEFAULT_PERSONA = '따뜻한 친구. 항상 곁에 있어 주고, 진심으로 이 사람을 챙긴다.';
 const MAX_ATTACH_MB = 15; // 첨부 1개 상한(대략)
 // "이전 대화 더 보기" 한 번에 불러올 개수. 무한스크롤 관례(20~50) 중 50 — 한 번에 전부 붙이면
@@ -889,47 +889,29 @@ function requestStop() {
 
 /* ── 생성 중 후속 메시지 큐잉 ─────────────────────────────── */
 // 생성 중 Enter 로 보낸 메시지는 대기열에 쌓였다가, 현재 답변이 끝나면 순서대로 처리된다.
+// 생성 중 보낸 메시지: 사용자 버블을 바로 보여주고(사라진 것처럼 안 보이게), 현재 턴이 끝나면
+// 순서대로 처리한다. 큐는 "동시 2턴" 방지를 위한 직렬화용일 뿐 — 이전의 "대기 알약" UI는 제거됨.
 function queueMessage(text, atts) {
-  const strip = $('#queued-strip');
-  const item = { text, atts };
-  if (strip) {
-    const pill = document.createElement('div');
-    pill.className = 'queued-pill';
-    const tag = document.createElement('span');
-    tag.className = 'queued-tag'; tag.textContent = '⏳ 대기 중';
-    const label = document.createElement('span');
-    label.className = 'queued-text';
-    label.textContent = text || (atts.length ? `첨부 ${atts.length}개` : '');
-    const x = document.createElement('button');
-    x.className = 'queued-x'; x.textContent = '×'; x.title = '대기 취소';
-    x.addEventListener('click', () => {
-      const i = _queue.indexOf(item);
-      if (i >= 0) _queue.splice(i, 1);
-      pill.remove();
-      if (!_queue.length) strip.classList.add('hidden');
-    });
-    pill.appendChild(tag); pill.appendChild(label); pill.appendChild(x);
-    strip.appendChild(pill);
-    strip.classList.remove('hidden');
-    item.el = pill;
+  const div = appendMessage('user', text, true, Date.now());
+  if (atts && atts.length) {
+    renderFileCards(div, atts.map(a => {
+      const isImg = /\.(png|jpe?g|gif|webp)$/i.test(a.name || '');
+      return { name: a.name, size: a.size || (a.data ? Math.floor(a.data.length * 0.75) : 0), isImage: isImg, dataUrl: (isImg && a.data) ? `data:${a.mimeType || 'image/jpeg'};base64,${a.data}` : undefined };
+    }));
   }
-  _queue.push(item);
+  _queue.push({ text, atts });
 }
 function clearQueue() {
   _queue = [];
-  const strip = $('#queued-strip');
-  if (strip) { strip.innerHTML = ''; strip.classList.add('hidden'); }
 }
 // 현재 턴 종료 후 호출 — 대기열 맨 앞을 이어서 보낸다.
 function drainQueue() {
   if (!_queue.length || _generating) return;
   const item = _queue.shift();
-  if (item.el) item.el.remove();
-  if (!_queue.length) { const strip = $('#queued-strip'); if (strip) strip.classList.add('hidden'); }
-  sendMessage(item.text, item.atts);
+  sendMessage(item.text, item.atts, true); // 큐 항목은 이미 버블 표시됨 → 재렌더 생략
 }
 
-async function sendMessage(qText, qAtts) {
+async function sendMessage(qText, qAtts, alreadyRendered) {
   const fromQueue = (qText !== undefined);
   const input = $('#chat-input');
   const text = fromQueue ? qText : input.value.trim();
@@ -947,9 +929,9 @@ async function sendMessage(qText, qAtts) {
   setGenerating(true, currentAgent.id);
 
   // 첨부는 아래 카드로 표시하므로 버블 텍스트엔 넣지 않음(text만)
-  const userMsgDiv = appendMessage('user', text, true, Date.now());
+  const userMsgDiv = alreadyRendered ? null : appendMessage('user', text, true, Date.now());
   // 보낸 즉시 사용자 버블에 파일 카드 표시(임시 — 경로/버튼은 응답 후 활성). 이미지는 썸네일 바로.
-  if (atts.length) {
+  if (atts.length && userMsgDiv) {
     renderFileCards(userMsgDiv, atts.map(a => {
       const isImg = /\.(png|jpe?g|gif|webp)$/i.test(a.name || '');
       return { name: a.name, size: a.size || (a.data ? Math.floor(a.data.length * 0.75) : 0), isImage: isImg, dataUrl: (isImg && a.data) ? `data:${a.mimeType || 'image/jpeg'};base64,${a.data}` : undefined };
