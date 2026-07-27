@@ -945,6 +945,13 @@ async function sendMessage(qText, qAtts, alreadyRendered) {
   // 긴 작업(도구 사용 등)으로 화면이 잠잠할 때 "멈춘 건지 도는 건지" 불안을 없앤다.
   //  · 첫 토큰 전: "생각 중… N초"  · 스트리밍 중 잠잠(도구 작업): "작업 중… N초 경과"
   let streamDiv = null, streamBubble = null, streamed = '';
+  // 스트리밍 렌더 코얼레싱: 델타마다 DOM을 건드리면(전체 재작성+강제 리플로우) 저사양에서
+  // 렌더러 스레드가 포화돼 생성 중 타이핑이 씹힌다. 화면 갱신은 프레임당 1회로 제한한다.
+  let rafPending = false, rafId = 0;
+  const flushStream = () => {
+    rafPending = false;
+    if (streamBubble) { streamBubble.textContent = streamed; scrollToBottom(); }
+  };
   const startedAt = Date.now();
   let lastDelta = startedAt, workEl = null;
   const aliveTimer = setInterval(() => {
@@ -976,8 +983,7 @@ async function sendMessage(qText, qAtts, alreadyRendered) {
       streamBubble = streamDiv.querySelector('.bubble');
     }
     streamed += data.delta;
-    streamBubble.textContent = streamed;
-    scrollToBottom();
+    if (!rafPending) { rafPending = true; rafId = requestAnimationFrame(flushStream); }
   });
 
   try {
@@ -1020,6 +1026,7 @@ async function sendMessage(qText, qAtts, alreadyRendered) {
     else appendMessage('agent', '오류가 발생했습니다: ' + e.message);
   } finally {
     clearInterval(aliveTimer);
+    if (rafPending) { cancelAnimationFrame(rafId); rafPending = false; } // 대기 중 프레임이 최종 렌더를 덮지 않게
     if (workEl) { workEl.remove(); workEl = null; }
     offStream();
     setGenerating(false);
