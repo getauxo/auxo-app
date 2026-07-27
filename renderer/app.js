@@ -26,6 +26,19 @@ function showScreen(id) {
   if (el) el.classList.add('active');
 }
 
+// 스플래시(시동) 화면: 초기 진입 깜빡임(온보딩이 잠깐 보이던 것)을 덮고, 준비되면 페이드아웃.
+// 최소 표시시간(깜빡임 방지)만 두고, 실제 화면 결정은 init()이 스플래시 뒤에서 끝낸 뒤 걷는다.
+const SPLASH_START = Date.now();
+function hideSplash() {
+  const el = document.getElementById('splash');
+  if (!el || el.style.display === 'none') return;
+  const wait = Math.max(0, 900 - (Date.now() - SPLASH_START)); // 빠른 PC도 최소 0.9초는 보이게
+  setTimeout(() => {
+    el.classList.add('splash-hide');
+    setTimeout(() => { el.style.display = 'none'; }, 520); // CSS 페이드(.5s) 후 완전히 제거
+  }, wait);
+}
+
 /* ── 모달 (설정·알림·능력) ───────────────────────────────
    .modal-screen은 .screen과 별개 — 대화 화면을 베이스로 둔 채 위에 띄운다.
    여닫기: openModal/closeModal. 닫기 = X 버튼 · 백드롭 클릭 · ESC. */
@@ -2138,6 +2151,9 @@ if (btnThemeLight) btnThemeLight.addEventListener('click', () => setTheme('light
     const smokeTarget = await window.agentAPI.getSmokeScreenTarget();
     const smokeId = await window.agentAPI.getSmokeAgentId();
 
+    // smoke(스크린샷 캡처) 모드에선 스플래시가 캡처를 가리므로 즉시 제거.
+    if (smokeTarget || smokeId) { const sp = document.getElementById('splash'); if (sp) sp.style.display = 'none'; }
+
     if (smokeTarget === 'onboarding') {
       // 온보딩 화면 그대로 표시
       showScreen('screen-onboarding');
@@ -2187,10 +2203,12 @@ if (btnThemeLight) btnThemeLight.addEventListener('click', () => setTheme('light
       showScreen('screen-onboarding');
       goWizStep(1); // 3단계 wizard 시작
     }
+    hideSplash(); // 올바른 화면을 정한 뒤 스플래시 페이드아웃(온보딩 깜빡임 없음)
   } catch (e) {
     console.error('[init] error:', e && e.message, e);
     showScreen('screen-onboarding');
     try { goWizStep(1); } catch (_) {}
+    hideSplash();
     // smoke 모드에서 catch 시에도 신호 전송 (타임아웃 방지)
     try {
       if (window.agentAPI && window.agentAPI.smokeReady) window.agentAPI.smokeReady();

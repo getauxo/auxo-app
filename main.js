@@ -184,6 +184,11 @@ app.whenReady().then(async () => {
     require('./youtube-transcript').setUserBinDir(path.join(userData, 'bin'));
   } catch (e) { console.error('[paths] userData 경로 설정 실패:', e.message); }
 
+  // 기억모델 백그라운드 워밍업 — 스플래시/시동 뒤에서 미리 로딩해 첫 대화의 1회성 지연 제거.
+  if (!isSmokeMode) setTimeout(() => {
+    try { const ags = storage.loadAllAgents(); if (ags && ags.length) embeddings.warm(ags[0]); } catch (_) {}
+  }, 1500);
+
   if (isSmokeMode) {
     await runSmokeScreenshot();
     return;

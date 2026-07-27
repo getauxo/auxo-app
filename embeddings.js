@@ -96,41 +96,94 @@ function getEmbedder(agent) {
 //    관련성 판단은 두뇌가 내용을 읽고 한다 — memory-search-relevance-research.md 참고.
 const LOCAL_EMBED_MODEL = 'onnx-community/embeddinggemma-300m-ONNX';
 const LOCAL_EMBED_DTYPE = 'q4f16';   // 175MB. electron 31(Node 20)에서 동작 확인
+const { Worker } = require('worker_threads');
 let _localPipePromise = null;
+
+// ── 로컬 임베딩 오프로드 ────────────────────────────────────────────────────
+// onnxruntime 계산(모델 로드+추론)이 메인/CLI 이벤트루프를 막아 UI가 "(응답 없음)"이 되던
+// 문제(2026-07-27 노트북 실측: 메인 스레드 최대 7.8초 정지) 해결. 계산을 워커 스레드에서 돌려
+// 메인 스레드는 항상 자유롭게 둔다. 워커 불가 환경은 과거 방식(인프로세스)으로 자동 폴백.
+let _embWorker = null, _embWorkerBroken = false, _embReqId = 0;
+const _embPending = new Map();
+
+function _localModelDir() {
+  try {
+    const path = require('path'), fs = require('fs');
+    const dir = path.join(__dirname, 'models').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+    if (fs.existsSync(path.join(dir, ...LOCAL_EMBED_MODEL.split('/'), 'config.json'))) return dir;
+  } catch (_) {}
+  return null;
+}
+
+// onnxruntime 스레드 상한. 코어를 UI/메인에 남긴다. ≤4 논리코어(대개 2물리코어=저사양 노트북)는
+// 1개만 써서 화면이 굶지 않게 한다. 큰 머신은 4논리코어를 UI 여유로 남긴다.
+function _embThreads() {
+  try { const n = require('os').cpus().length || 2; return n <= 4 ? 1 : Math.max(1, n - 4); }
+  catch (_) { return 1; }
+}
+
+function _startEmbWorker() {
+  const path = require('path');
+  const wp = path.join(__dirname, 'embed-worker.js'); // asar 내부 경로(Electron 동일프로세스 asar 패치로 로드)
+  const w = new Worker(wp, { workerData: { model: LOCAL_EMBED_MODEL, dtype: LOCAL_EMBED_DTYPE, modelDir: _localModelDir(), threads: _embThreads() } });
+  w.on('message', (msg) => {
+    const p = _embPending.get(msg.id); if (!p) return; _embPending.delete(msg.id);
+    if (msg.error) p.reject(new Error(msg.error)); else p.resolve(msg.vecs);
+  });
+  const failAll = (e) => { for (const [, p] of _embPending) p.reject(e); _embPending.clear(); _embWorker = null; };
+  w.on('error', (e) => { _embWorkerBroken = true; failAll(e); });
+  w.on('exit', (code) => { if (code !== 0) failAll(new Error('embed worker exit ' + code)); });
+  if (w.unref) w.unref(); // CLI 등에서 프로세스 종료를 막지 않게(대기 중 embed는 turn이 살려둠)
+  return w;
+}
+
+function _workerEmbed(texts, role) {
+  if (_embWorkerBroken) return _localInProcessEmbed(texts, role);
+  try { if (!_embWorker) _embWorker = _startEmbWorker(); }
+  catch (e) { _embWorkerBroken = true; return _localInProcessEmbed(texts, role); }
+  return new Promise((resolve, reject) => {
+    const id = ++_embReqId;
+    _embPending.set(id, { resolve, reject });
+    _embWorker.postMessage({ id, texts, role });
+  }).catch(() => { _embWorkerBroken = true; return _localInProcessEmbed(texts, role); });
+}
+
+// 폴백(과거 동작): 워커를 못 쓰는 환경에서만 메인에서 직접 계산.
+async function _localInProcessEmbed(texts, role) {
+  if (!_localPipePromise) {
+    _localPipePromise = import('@huggingface/transformers')
+      .then(m => {
+        // 번들된 모델 우선 — 설치본에 models/ 가 있으면 그걸 쓴다(인터넷 불필요).
+        try {
+          const path = require('path'), fs = require('fs');
+          const dir = path.join(__dirname, 'models').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+          if (fs.existsSync(path.join(dir, ...LOCAL_EMBED_MODEL.split('/'), 'config.json'))) {
+            m.env.localModelPath = dir;
+            m.env.allowLocalModels = true;
+          }
+        } catch (_) {}
+        return m.pipeline('feature-extraction', LOCAL_EMBED_MODEL, {
+          dtype: LOCAL_EMBED_DTYPE,
+          session_options: { intraOpNumThreads: _embThreads(), interOpNumThreads: 1 },
+        });
+      })
+      .catch(e => { _localPipePromise = null; throw e; }); // 실패 시 재시도 가능하게 리셋
+  }
+  const pipe = await _localPipePromise;
+  // EmbeddingGemma는 검색용 비대칭 프리픽스를 쓴다(질의/문서 형식이 다름).
+  const wrap = (t) => role === 'query' ? `task: search result | query: ${t}` : `title: none | text: ${t}`;
+  const out = [];
+  for (const t of texts) {
+    const o = await pipe(wrap(String(t || '')), { pooling: 'mean', normalize: true });
+    out.push(Array.from(o.data));
+  }
+  return out;
+}
+
 function _getLocalEmbedder() {
   return {
     key: 'local:' + LOCAL_EMBED_MODEL,
-    embed: async (texts, role) => {
-      if (!_localPipePromise) {
-        _localPipePromise = import('@huggingface/transformers')
-          .then(m => {
-            // 번들된 모델 우선 — 설치본에 models/ 가 있으면 그걸 쓴다(인터넷 불필요).
-            // 우리는 로컬 설치형 제품이다. 대화하려는데 인터넷이 필요하면 정체성 배신이다.
-            // 없으면(개발 중 등) 기존대로 원격에서 받는다. 준비=`npm run prepare-model`(dist 시 자동).
-            try {
-              const path = require('path'), fs = require('fs');
-              // 배포(asar)에서 모델은 app.asar.unpacked 에 풀린다. 네이티브 onnxruntime는
-              // asar 가상경로를 못 읽으므로 실제 경로(unpacked)로 바꿔준다. (dev에선 그대로)
-              const dir = path.join(__dirname, 'models').replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
-              if (fs.existsSync(path.join(dir, ...LOCAL_EMBED_MODEL.split('/'), 'config.json'))) {
-                m.env.localModelPath = dir;
-                m.env.allowLocalModels = true;
-              }
-            } catch (_) {}
-            return m.pipeline('feature-extraction', LOCAL_EMBED_MODEL, { dtype: LOCAL_EMBED_DTYPE });
-          })
-          .catch(e => { _localPipePromise = null; throw e; }); // 실패 시 재시도 가능하게 리셋
-      }
-      const pipe = await _localPipePromise;
-      // EmbeddingGemma는 검색용 비대칭 프리픽스를 쓴다(질의/문서 형식이 다름).
-      const wrap = (t) => role === 'query' ? `task: search result | query: ${t}` : `title: none | text: ${t}`;
-      const out = [];
-      for (const t of texts) {
-        const o = await pipe(wrap(String(t || '')), { pooling: 'mean', normalize: true });
-        out.push(Array.from(o.data));
-      }
-      return out;
-    },
+    embed: (texts, role) => _workerEmbed(texts, role),
   };
 }
 
@@ -222,4 +275,15 @@ async function selectRelevant(facts, query, embedder, topK = 12, textFn = _factT
   return { selected, recalled: true, total, changed, qEmb: qv };
 }
 
-module.exports = { getEmbedder, selectRelevant, cosine };
+// 워밍업: 로컬 임베딩 모델을 미리(백그라운드) 로딩해 첫 대화 때의 1회성 지연을 없앤다.
+// 로컬 임베더일 때만 동작(API 임베더는 불필요한 호출 방지). 실패는 조용히 무시(다음 사용 시 재시도).
+async function warm(agent) {
+  try {
+    const e = getEmbedder(agent);
+    if (e && typeof e.embed === 'function' && String(e.key || '').startsWith('local:')) {
+      await e.embed(['워밍업'], 'query');
+    }
+  } catch (_) {}
+}
+
+module.exports = { getEmbedder, selectRelevant, cosine, warm };
