@@ -14,7 +14,9 @@
 const fs = require('fs');
 const path = require('path');
 
-const NOTICE_URL = 'https://raw.githubusercontent.com/getauxo/Auxo/main/notice.json';
+// 공개 스냅샷 repo(auxo-app)의 raw — 작업실(getauxo/Auxo)은 계속 비공개라 그걸 가리키면 오픈 후에도 404.
+// auxo-app은 정식 오픈 때 public 전환 → 그때부터 알림 동작(서버 없이 GitHub raw 유지).
+const NOTICE_URL = 'https://raw.githubusercontent.com/getauxo/auxo-app/main/notice.json';
 
 function offPath(dataDir) {
   try { return path.join(dataDir, 'notice-off'); } catch (_) { return null; }

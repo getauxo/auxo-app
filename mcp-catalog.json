@@ -28,16 +28,23 @@
       "note": "원격 MCP(카카오). 첫 연결 시 브라우저로 카카오 로그인이 필요해요. ⚠️ 해외/클라우드 IP는 카카오 정책상 막힐 수 있어요(한국 PC에서 권장)."
     },
     {
-      "id": "google-workspace", "name": "Google (Gmail·캘린더·드라이브)",
-      "description": "Gmail·Google Calendar·Google Drive 연동. 메일 확인·일정 등록·문서 작업.",
+      "id": "github", "name": "GitHub (공식·원격)",
+      "description": "GitHub 공식 원격 MCP — 저장소·이슈·PR·코드 검색·파일. 로그인 한 번으로 연결, 키 발급 불필요.",
+      "command": "npx", "args": ["-y", "mcp-remote", "https://api.githubcopilot.com/mcp/"], "params": [],
+      "requires": ["node"], "official": true,
+      "note": "GitHub이 직접 운영하는 공식 호스팅 서버. 첫 연결 시 브라우저로 GitHub 로그인·허용(원클릭 OAuth). 별도 토큰/키 발급 없이 됩니다."
+    },
+    {
+      "id": "google-workspace", "name": "Google (Gmail·캘린더·드라이브) — 비공식·고급",
+      "description": "Gmail·Google Calendar·Google Drive 연동(비공식 개인 개발자 서버). 메일 확인·일정 등록·문서 작업.",
       "command": "npx", "args": ["-y", "@aaronsb/google-workspace-mcp"],
       "env": { "GOOGLE_CLIENT_ID": "{{clientId}}", "GOOGLE_CLIENT_SECRET": "{{clientSecret}}" },
       "params": [
         { "key": "clientId", "label": "Google OAuth Client ID", "required": true, "example": "xxxx.apps.googleusercontent.com" },
         { "key": "clientSecret", "label": "Google OAuth Client Secret", "required": true }
       ],
-      "requires": ["node"],
-      "note": "⚠️ 고급: Google Cloud Console에서 OAuth 클라이언트를 발급해 ID/Secret을 넣어야 해요(비개발자용 간편 연동은 추후 제공 예정). 첫 사용 시 브라우저로 Google 로그인 동의."
+      "requires": ["node"], "official": false,
+      "note": "⚠️ 비공식(개인 개발자 @aaronsb) 서버 + 고급: Google Cloud Console에서 OAuth 클라이언트를 발급해 ID/Secret을 넣어야 해요. 구글 공식 원격 MCP가 정식 출시되면 공식으로 교체 예정. 첫 사용 시 브라우저로 Google 로그인 동의."
     }
   ]
 }

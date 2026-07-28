@@ -36,7 +36,7 @@ function buildAvailableTools({ toolsOn, webOn, multimodalOn, pdfOn, mcpDecls = [
     // 이 PC에서 실제 실행 가능한 코드 언어만 안내(없는 언어를 고르지 않게). 예: 보통 node만.
     let codeHint = '코드 실행(run_code — python/node/bash, 긴 코드에 편함)';
     try { const a = procTools.availableLangs(); const u = Object.keys(a).filter(k => a[k]); if (u.length) codeHint = `코드 실행(run_code — 이 PC에선 ${u.join('·')}로 실행돼. 다른 언어는 안 되니 이 중에서 골라. 긴 코드에 편함)`; } catch (_) {}
-    availableTools.push('중요한 것 기억하기(remember — 대화 중 알게 된 사용자 사실·선호를 직접 장기기억에 저장)', '기억 지우기(forget — 사용자가 지워달라고 할 때 특정 기억을 삭제)', '옛 기억·대화 검색(search_memory — "저번에/그때/지난주에 ~한 거", "그 식당·그거 뭐였지"처럼 지금 대화창에 없는 과거를 물으면 지어내지 말고 이걸로 먼저 찾기)', '현재 날짜·시각', '정확한 계산(계산기)', 'URL/데이터 가져오기(fetch)', '새 스킬 찾기·설치(find_skill→승인→install_skill, 신뢰 출처)', '새 도구(MCP) 찾기·설치(find_mcp→승인→install_mcp, 예: 브라우저 자동화·파일·메모리)', '승인 정도(자율도) 바꾸기(set_trust — 사용자가 "앞으로 묻지 말고 알아서 해/위험한 것만 물어봐/뭐든 확인해"라고 하면)', '파일 다루기(list_files·read_file·write_file·make_dir·search_files — 허용된 폴더 안에서만, 새 폴더는 사용자 허락 후 grant_dir)', '사용자에게 파일 보내기(send_file — 만들었거나 가진 파일을 채팅으로 전달. 사용자가 "그 파일 줘/보내줘"라고 하면 이 도구를 써. 허용폴더 안 파일만. 링크·버튼을 글로 지어내지 말고 반드시 이 도구 호출)', '터미널 명령 실행(run_shell — 허용 폴더에서, 파괴적 명령 차단; 사용 전 grant_shell로 허락)', codeHint, '웹 검색(web_search — 실시간 정보·최신 사실을 인터넷에서 찾기)', '정기 작업 예약(schedule_task — "매일 9시/매시/N분마다" 자동 실행; PC 켜진 동안)', '방법 익히기·스킬 만들기(create_skill — 잘 해낸 방법을 저장해 다음에 재사용)', '먼저 안부 묻기 설정(set_heartbeat — "그만/다시 챙겨줘/인사 시간 바꿔")');
+    availableTools.push('중요한 것 기억하기(remember — 대화 중 알게 된 사용자 사실·선호를 직접 장기기억에 저장)', '기억 지우기(forget — 사용자가 지워달라고 할 때 특정 기억을 삭제)', '옛 기억·대화 검색(search_memory — "저번에/그때/지난주에 ~한 거", "그 식당·그거 뭐였지"처럼 지금 대화창에 없는 과거를 물으면 지어내지 말고 이걸로 먼저 찾기)', '현재 날짜·시각', '정확한 계산(계산기)', 'URL/데이터 가져오기(fetch)', '새 스킬 찾기·설치(find_skill→승인→install_skill, 신뢰 출처)', '새 도구(MCP) 찾기·설치(find_mcp→승인→install_mcp, 예: 브라우저 자동화·파일·메모리)', '승인 정도(자율도) 바꾸기(set_trust — 사용자가 "앞으로 묻지 말고 알아서 해/위험한 것만 물어봐/뭐든 확인해"라고 하면)', '파일 다루기(list_files·read_file·write_file·make_dir·search_files — 허용된 폴더 안에서만, 새 폴더는 사용자 허락 후에만·허락은 사용자만)', '사용자에게 파일 보내기(send_file — 만들었거나 가진 파일을 채팅으로 전달. 사용자가 "그 파일 줘/보내줘"라고 하면 이 도구를 써. 허용폴더 안 파일만. 링크·버튼을 글로 지어내지 말고 반드시 이 도구 호출)', '터미널 명령 실행(run_shell — 허용 폴더에서, 파괴적 명령 차단; 사용 전 사용자 허락 필요)', codeHint, '웹 검색(web_search — 실시간 정보·최신 사실을 인터넷에서 찾기)', '정기 작업 예약(schedule_task — "매일 9시/매시/N분마다" 자동 실행; PC 켜진 동안)', '방법 익히기·스킬 만들기(create_skill — 잘 해낸 방법을 저장해 다음에 재사용)', '먼저 안부 묻기 설정(set_heartbeat — "그만/다시 챙겨줘/인사 시간 바꿔")');
   }
   if (multimodalOn) availableTools.push(pdfOn ? '이미지·문서(PDF) 보기(사용자가 첨부한 파일을 직접 보고 이해)' : '이미지 보기(사용자가 첨부한 이미지를 직접 보고 이해)');
   if (mcpDecls.length > 0) availableTools.push(`연결된 MCP 도구: ${mcpDecls.map(d => d.name).join(', ')}`);
@@ -110,14 +110,12 @@ function buildDecls({ skillCatalog = [], mcpDecls = [] }) {
       parameters: { type: 'object', properties: { dir: { type: 'string', description: '검색 시작 폴더' }, query: { type: 'string', description: '파일명 키워드(빈 값이면 전체)' } }, required: ['dir'] } },
     { name: 'send_file', description: '허용된 폴더 안의 파일을 사용자에게 채팅으로 보낸다(전달). 사용자가 "그 파일 줘/보내줘"라고 하거나, 네가 만든 결과 파일을 건넬 때 호출. path=보낼 파일 경로, note=함께 전할 짧은 설명(선택).',
       parameters: { type: 'object', properties: { path: { type: 'string', description: '보낼 파일 경로(허용폴더 안)' }, note: { type: 'string', description: '함께 보낼 설명(선택)' } }, required: ['path'] } },
-    { name: 'grant_dir', description: '특정 폴더에 대한 파일 접근을 허용 목록에 추가한다. ⚠️ 사용자가 그 폴더 접근을 명시적으로 허용했을 때만 호출(예: "바탕화면 허용해"·"응 그 폴더 써도 돼"). 한 번 허용하면 그 폴더는 다시 묻지 않는다.',
-      parameters: { type: 'object', properties: { path: { type: 'string', description: '허용할 폴더 경로' } }, required: ['path'] } },
+    // (grant_dir 제거: 허용은 사용자만 — 엔진이 사용자 답으로만 폴더 허용. 모델은 요청만.)
     // ── 셸/터미널(공통층) — 허용폴더를 작업위치로, 파괴적 명령 차단. ──
     { name: 'run_shell', description: '터미널/셸 명령을 실행한다(허용된 폴더를 작업위치로). 파괴적·위험 명령은 자동 차단됨. 이 컴퓨터 OS에 맞는 명령을 써. 셸 사용이 아직 허용 안 됐으면 결과 안내대로 사용자 허락을 구해.',
       parameters: { type: 'object', properties: { command: { type: 'string', description: '실행할 명령' }, cwd: { type: 'string', description: '작업 폴더(생략 시 허용폴더 기본)' } }, required: ['command'] } },
-    { name: 'grant_shell', description: '터미널 명령 실행을 허용한다. ⚠️ 사용자가 명시적으로 허용했을 때만 호출(예: "명령 실행 허용해"). 한 번 허용하면 다시 묻지 않는다(파괴적 명령은 여전히 차단).',
-      parameters: { type: 'object', properties: {}, required: [] } },
-    { name: 'run_code', description: '코드를 작성해 실행한다(python/node/bash). 긴 코드나 따옴표가 많은 코드엔 run_shell보다 편하다. 허용 폴더에서 실행하고 stdout을 돌려준다. 셸/코드 실행 허용(grant_shell)이 필요.',
+    // (grant_shell 제거: 터미널 허용도 사용자만 — 엔진이 사용자 답으로만 허용.)
+    { name: 'run_code', description: '코드를 작성해 실행한다(python/node/bash). 긴 코드나 따옴표가 많은 코드엔 run_shell보다 편하다. 허용 폴더에서 실행하고 stdout을 돌려준다. 셸/코드 실행은 사용자 허락이 필요(허락은 사용자만).',
       parameters: { type: 'object', properties: { language: { type: 'string', description: 'python | node | bash' }, code: { type: 'string', description: '실행할 코드 전체' }, cwd: { type: 'string', description: '작업 폴더(생략 시 허용폴더 기본)' } }, required: ['language', 'code'] } },
     { name: 'web_search', description: '인터넷을 검색해 관련 페이지(제목·링크·요약)를 찾는다. 실시간 정보·최신 사실·모르는 것을 알아볼 때 적극 사용. 결과의 링크는 fetch_url로 더 자세히 읽을 수 있어. (읽기 전용, 승인 불필요)',
       parameters: { type: 'object', properties: { query: { type: 'string', description: '검색어' }, max: { type: 'number', description: '결과 개수(기본 5, 최대 10)' } }, required: ['query'] } },
@@ -358,43 +356,30 @@ function makeExecute(ctx) {
           r = exec(fresh.allowedDirs);
         }
       }
-      if (r && r.needGrant) r.message = `'${r.needGrant}' 폴더는 아직 접근이 허용되지 않았어. 사용자에게 "이 폴더에 접근해도 될까요?"라고 물어보고, 허락하면 grant_dir로 허용한 뒤 다시 시도해.`;
+      if (r && r.needGrant) {
+        const gdir = require('path').dirname(r.needGrant); // 허용은 상위 폴더 단위(파일 하나만 아니라 그 폴더)
+        try { const fr = storage.loadAgent(agentId); if (fr) { fr.pendingGrant = { kind: 'dir', dir: gdir }; storage.saveAgent(fr); if (agent) agent.pendingGrant = fr.pendingGrant; } } catch (_) {}
+        r.message = `'${gdir}' 폴더는 아직 허용되지 않았어. 이건 사용자만 허용할 수 있어(네가 직접 허용 못 함). 사용자에게 "이 폴더에 접근해도 될까요?"라고 묻고, 사용자가 허락하면 그다음에 다시 시도해.`;
+      }
       return r;
     }
-    if (n === 'grant_dir') {
-      const dir = String(args.path || '').trim();
-      if (!dir) return { error: '허용할 폴더 경로가 필요해' };
-      const norm = fsTools._norm(dir);
-      // 존재하지도 않고 부모 폴더도 없는 경로(두뇌가 'C:\Users\User\...'처럼 잘못 지어낸 가짜 경로)는 등록 거부.
-      if (!fsTools.pathOrParentExists(norm)) {
-        return { error: `'${norm}' 경로가 실제로 없어서 허용할 수 없어. 폴더 위치를 정확히 알려줘 — 예: 바탕화면이면 "바탕화면/폴더명"처럼.` };
-      }
-      const fresh = storage.loadAgent(agentId);
-      if (!fresh) return { error: '저장 실패' };
-      fresh.allowedDirs = fresh.allowedDirs || [];
-      if (!fresh.allowedDirs.some(d => fsTools._norm(d) === norm)) fresh.allowedDirs.push(norm);
-      storage.saveAgent(fresh);
-      if (agent) agent.allowedDirs = fresh.allowedDirs; // 같은 턴 재시도에 즉시 반영
-      return { granted: true, dir: norm, message: `'${norm}' 폴더 접근을 허용했어. 이제 이 폴더 안에서 파일 작업을 할 수 있어. (이 폴더는 앞으로 다시 안 물어봐.) 하려던 작업이 있으면 이어서 해.` };
+    if (n === 'grant_dir' || n === 'grant_shell') {
+      // 허용은 사용자만 — 모델은 grant를 직접 못 켠다(엔진이 사용자 답으로만 허용). 방어적 거부.
+      return { error: '폴더·터미널 접근 허용은 사용자만 할 수 있어. 네가 직접 켤 수 없어 — 사용자에게 허락을 구한 뒤 다시 시도해.' };
     }
     if (n === 'run_shell') {
       const auto = agent && agent.trustLevel === 'autonomous';
       if (!(agent && agent.allowShell) && !auto) {
-        return { needGrantShell: true, message: '터미널 명령 실행은 아직 허용되지 않았어. 사용자에게 "터미널 명령 실행을 허용할까요?"라고 묻고, 허락하면 grant_shell로 허용한 뒤 다시 시도해.' };
+        try { const fr = storage.loadAgent(agentId); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); if (agent) agent.pendingGrant = fr.pendingGrant; } } catch (_) {}
+        return { needGrantShell: true, message: '터미널 명령 실행은 아직 허용되지 않았어. 이건 사용자만 허용할 수 있어. 사용자에게 "터미널 명령 실행을 허용할까요?"라고 묻고, 허락하면 다시 시도해.' };
       }
       return procTools.runShell((agent && agent.allowedDirs) || [], args.command, args.cwd);
-    }
-    if (n === 'grant_shell') {
-      const fresh = storage.loadAgent(agentId);
-      if (!fresh) return { error: '저장 실패' };
-      fresh.allowShell = true; storage.saveAgent(fresh);
-      if (agent) agent.allowShell = true; // 같은 턴 재시도 반영
-      return { granted: true, message: '터미널 명령 실행을 허용했어. (파괴적·위험 명령은 여전히 차단돼.) 하려던 작업이 있으면 이어서 해.' };
     }
     if (n === 'run_code') {
       const auto = agent && agent.trustLevel === 'autonomous';
       if (!(agent && agent.allowShell) && !auto) {
-        return { needGrantShell: true, message: '코드 실행은 아직 허용되지 않았어. 사용자에게 "코드/명령 실행을 허용할까요?"라고 묻고, 허락하면 grant_shell로 허용한 뒤 다시 시도해.' };
+        try { const fr = storage.loadAgent(agentId); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); if (agent) agent.pendingGrant = fr.pendingGrant; } } catch (_) {}
+        return { needGrantShell: true, message: '코드 실행은 아직 허용되지 않았어. 이건 사용자만 허용할 수 있어. 사용자에게 "코드/명령 실행을 허용할까요?"라고 묻고, 허락하면 다시 시도해.' };
       }
       return procTools.runCode((agent && agent.allowedDirs) || [], args.language, args.code, args.cwd);
     }

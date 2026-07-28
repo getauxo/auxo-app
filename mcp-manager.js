@@ -147,7 +147,9 @@ function loadCatalog() { try { return JSON.parse(fs.readFileSync(CATALOG_PATH, '
 // ── 3b: 신뢰 레지스트리(npm 공식) 확대 ────────────────────────────────────────
 // MCP는 '실제 실행되는 코드' → 임의 패키지 자동설치는 금지(D2/D4: 샌드박스 전엔 신뢰출처만).
 // 공식 네임스페이스 @modelcontextprotocol/* 만 발견·설치 허용(서버 20+종: filesystem·github·memory·fetch·time 등).
-const TRUSTED_MCP_SCOPES = ['@modelcontextprotocol/'];
+// 신뢰 npm 스코프(공식 조직만). 이 스코프로 올라온 서버는 검색·설치 허용, 그 외 임의 패키지는 거부.
+// ⚠️ 각 스코프가 실제 그 회사 공식 소유인지 확인된 것만 추가(사칭 방지). (원격 호스팅형 공식은 카탈로그로 큐레이션.)
+const TRUSTED_MCP_SCOPES = ['@modelcontextprotocol/', '@playwright/', '@notionhq/'];
 function isTrustedPackage(name) { return TRUSTED_MCP_SCOPES.some(s => String(name || '').startsWith(s)); }
 
 // 설정이 필요한 공식 서버 — 무설정 bare 설치하면 "연결은 되나 실제론 안 되는"(예: filesystem 경로 없음) 벽에 부딪힌다.
@@ -171,8 +173,8 @@ function _configParams(short) {
 /** npm 레지스트리에서 신뢰 네임스페이스 MCP 서버 검색(읽기전용). 실패 시 빈 배열 → 정적 카탈로그로 degrade. */
 async function searchRegistry(query, max = 6) {
   const q = String(query || '').trim();
-  // npm 검색: scope: 한정자 단독은 빈 결과라 불안정 → org명을 텍스트로 준다(실측). 그럼 공식 패키지가 상위에 온다.
-  const text = q ? `modelcontextprotocol ${q}` : 'modelcontextprotocol server';
+  // 신뢰 스코프(공식 조직) 서버만 노출. 검색은 넓게 하되 isTrustedPackage + 서버성(mcp/server) 필터로 좁힌다.
+  const text = q ? `${q} mcp server` : 'mcp server';
   const url = `https://registry.npmjs.org/-/v1/search?text=${encodeURIComponent(text)}&size=40`;
   try {
     const opt = { headers: { 'User-Agent': 'Auxo' } };
@@ -182,10 +184,10 @@ async function searchRegistry(query, max = 6) {
     const data = await r.json();
     return ((data && data.objects) || [])
       .map(o => o.package || {})
-      // 실제 설치형 서버(@modelcontextprotocol/server-*)만 노출 — sdk·inspector·client 등 비서버 패키지 제외.
-      .filter(p => /^@modelcontextprotocol\/server-/.test(p.name || ''))
+      // 신뢰 스코프(@modelcontextprotocol·@playwright·@notionhq…)의 실제 MCP 서버만 — sdk·client 등 비서버 제외.
+      .filter(p => isTrustedPackage(p.name) && /(mcp|server)/i.test(p.name || ''))
       .slice(0, max)
-      .map(p => { const short = _pkgShort(p.name); return { id: p.name, name: short, description: `${p.description || ''} (npm 공식·@modelcontextprotocol)`.trim(), params: _configParams(short), registry: true }; });
+      .map(p => { const short = _pkgShort(p.name); return { id: p.name, name: short, description: `${p.description || ''} (npm 공식 스코프)`.trim(), params: _configParams(short), registry: true }; });
   } catch (_) { return []; }
 }
 

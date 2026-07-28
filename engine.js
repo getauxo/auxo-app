@@ -332,13 +332,36 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
     }
   }
 
+  // ── 파일/셸 접근 허용: 직전 턴 '허용 대기'를 이번 사용자 답으로 소비(모든 두뇌·채널 공통). ──
+  //    허용 결정권은 모델이 아니라 사용자에게 있다(grant_dir/grant_shell 도구 제거). 엔진이 사용자 답으로만 허용.
+  if (agent.pendingGrant) {
+    const pg = agent.pendingGrant;
+    const gCancel = /(취소|아니|하지\s*마|싫|안\s*해|관둬|no\b)/i.test(userMessage);
+    const gAuto = /(앞으로|앞으론|이제부터|계속|묻지\s*마|묻지\s*말|알아서|그냥\s*해)/.test(userMessage);
+    const gApprove = /(허용|승인|그래|응|네|좋아|좋아요|해도|해줘|진행|ok|오케이|yes|ㅇㅇ|콜|하자|항상)/i.test(userMessage);
+    const fr = storage.loadAgent(agentId) || agent;
+    fr.pendingGrant = null; // one-shot
+    if (gCancel && !gAuto) {
+      approvalNote += `\n[시스템 알림: 사용자가 '${pg.dir || '터미널 실행'}' 접근을 거절했어. 그 작업은 하지 말고 다른 걸 도와줘.]`;
+    } else if (gApprove || gAuto) {
+      if (gAuto) fr.trustLevel = 'autonomous';
+      if (pg.kind === 'shell') { fr.allowShell = true; approvalNote += `\n[시스템 알림: 사용자가 터미널 명령 실행을 허용했어. 하려던 작업을 이어서 진행해.]`; }
+      else if (pg.dir) { fr.allowedDirs = fr.allowedDirs || []; if (!fr.allowedDirs.some(d => d === pg.dir)) fr.allowedDirs.push(pg.dir); approvalNote += `\n[시스템 알림: 사용자가 '${pg.dir}' 폴더 접근을 허용했어. 하려던 파일 작업을 이어서 진행해.]`; }
+    } else {
+      fr.pendingGrant = pg; // 애매한 답 → 다시 잡아두고 재확인
+      approvalNote += `\n[시스템 알림: '${pg.dir || '터미널 실행'}' 허용 대기 중인데 명확한 승인/거절이 아니야. 사용자에게 간단히 다시 확인해.]`;
+    }
+    storage.saveAgent(fr);
+    agent.allowedDirs = fr.allowedDirs; agent.allowShell = fr.allowShell; agent.trustLevel = fr.trustLevel; agent.pendingGrant = fr.pendingGrant;
+  }
+
   // Antigravity(구독): 우리 도구(MCP·remember 등)는 #548로 미지원이나 CLI 자체 네이티브 웹검색은 됨(실측 확증) → 웹검색만 정직 안내.
   const availableTools = (agent.brainMode === 'antigravity-subscription') ? ['web'] : ['remember', 'forget'];
   // REST 두뇌(gemini/openai/anthropic)는 커넥터가 localTools(시간·계산·URL)+웹검색을 자동 포함 → 1층에도 안내.
   if (restDelegate) availableTools.push('web', 'fetch_url', 'get_current_time', 'calculator');
   // 능력 안내: REST 두뇌 + 구독 두뇌(claude/codex) 공통. 구독도 auxo-mcp-tools로 아래 도구를 실제로 다 받는다(실행 대칭).
   if (restTools || subDelegate) {
-    availableTools.push('새 스킬 찾기·설치(find_skill→승인→install_skill)', '새 도구(MCP) 찾기·설치(find_mcp→승인→install_mcp, 예: 파일·브라우저·메모리)', '프로젝트·루틴 관리(start_project/start_routine/switch_work/close_project)', '승인 정도(자율도) 바꾸기(set_trust — "앞으로 묻지 말고 알아서 해/위험한 것만 물어봐/뭐든 확인해")', '파일 다루기(list_files·read_file·write_file·make_dir·search_files — 허용 폴더 안에서만, 새 폴더는 grant_dir로 사용자 허락 후)', '터미널 명령 실행(run_shell — 허용 폴더에서, 파괴적 명령 차단; 사용 전 grant_shell로 허락)', '코드 실행(run_code — python/node/bash, 긴 코드에 편함)', '웹 검색(web_search — 실시간 정보·최신 사실을 인터넷에서 찾기)', '정기 작업 예약(schedule_task — "매일 9시/매시/N분마다" 자동 실행; PC 켜진 동안)', '방법 익히기·스킬 만들기(create_skill — 잘 해낸 방법을 저장해 다음에 재사용)', '먼저 안부 묻기 설정(set_heartbeat — "그만/다시 챙겨줘/인사 시간 바꿔")');
+    availableTools.push('새 스킬 찾기·설치(find_skill→승인→install_skill)', '새 도구(MCP) 찾기·설치(find_mcp→승인→install_mcp, 예: 파일·브라우저·메모리)', '프로젝트·루틴 관리(start_project/start_routine/switch_work/close_project)', '승인 정도(자율도) 바꾸기(set_trust — "앞으로 묻지 말고 알아서 해/위험한 것만 물어봐/뭐든 확인해")', '파일 다루기(list_files·read_file·write_file·make_dir·search_files — 허용 폴더 안에서만, 새 폴더는 사용자 허락 후에만·허락은 사용자만)', '터미널 명령 실행(run_shell — 허용 폴더에서, 파괴적 명령 차단; 사용 전 사용자 허락 필요)', '코드 실행(run_code — python/node/bash, 긴 코드에 편함)', '웹 검색(web_search — 실시간 정보·최신 사실을 인터넷에서 찾기)', '정기 작업 예약(schedule_task — "매일 9시/매시/N분마다" 자동 실행; PC 켜진 동안)', '방법 익히기·스킬 만들기(create_skill — 잘 해낸 방법을 저장해 다음에 재사용)', '먼저 안부 묻기 설정(set_heartbeat — "그만/다시 챙겨줘/인사 시간 바꿔")');
     if (restTools) availableTools.push('복잡한 작업 단계분해 실행(plan_task/resume_task)'); // L3 플래너는 REST 두뇌 전용(구독 MCP엔 없음)
     if (mcpDecls.length) availableTools.push(`연결된 MCP 도구: ${mcpDecls.map(d => d.name).join(', ')}`);
   }

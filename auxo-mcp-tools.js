@@ -93,13 +93,11 @@ const FILE_DECLS = [
     inputSchema: { type: 'object', properties: { path: { type: 'string', description: '보낼 파일 경로(허용 폴더 안)' }, note: { type: 'string', description: '함께 전할 짧은 설명(선택)' } }, required: ['path'] } },
   { name: 'search_files', description: '폴더 하위에서 이름에 키워드가 든 파일을 찾는다. 허용된 폴더 안에서만.',
     inputSchema: { type: 'object', properties: { dir: { type: 'string' }, query: { type: 'string' } }, required: ['dir'] } },
-  { name: 'grant_dir', description: '특정 폴더 접근을 허용 목록에 추가. ⚠️ 사용자가 명시적으로 허용했을 때만. 한 번 허용하면 다시 안 묻는다.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
+  // (grant_dir 제거: 허용은 사용자만 — 엔진이 사용자 답으로만 폴더 허용. 모델은 요청만.)
   { name: 'run_shell', description: '터미널/셸 명령을 실행한다(허용된 폴더를 작업위치로). 파괴적 명령은 자동 차단. 셸 사용이 아직 허용 안 됐으면 결과 안내대로 사용자 허락을 구해.',
     inputSchema: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' } }, required: ['command'] } },
-  { name: 'grant_shell', description: '터미널 명령 실행을 허용한다. ⚠️ 사용자가 명시적으로 허용했을 때만. 한 번 허용하면 다시 안 묻는다(파괴적 명령은 여전히 차단).',
-    inputSchema: { type: 'object', properties: {}, required: [] } },
-  { name: 'run_code', description: '코드를 작성해 실행한다(python/node/bash). 긴 코드엔 run_shell보다 편하다. 허용 폴더에서 실행, stdout 반환. grant_shell 필요.',
+  // (grant_shell 제거: 터미널 허용도 사용자만 — 엔진이 사용자 답으로만 허용.)
+  { name: 'run_code', description: '코드를 작성해 실행한다(python/node/bash). 긴 코드엔 run_shell보다 편하다. 허용 폴더에서 실행, stdout 반환. 셸/코드 실행은 사용자 허락 필요(허락은 사용자만).',
     inputSchema: { type: 'object', properties: { language: { type: 'string' }, code: { type: 'string' }, cwd: { type: 'string' } }, required: ['language', 'code'] } },
 ];
 
@@ -288,41 +286,30 @@ const WORK_DECLS = [
           r = exec(fresh.allowedDirs);
         }
       }
-      if (r && r.needGrant) r.message = `'${r.needGrant}'는 아직 허용 안 된 폴더야. 사용자에게 접근 허용을 구하고, 허락하면 grant_dir로 허용한 뒤 다시 시도해.`;
-    }
-    else if (name === 'grant_dir') {
-      const dir = String((args && args.path) || '').trim();
-      const norm = dir ? fsTools._norm(dir) : '';
-      if (!dir) r = { error: '허용할 폴더 경로가 필요해' };
-      else if (!fsTools.pathOrParentExists(norm)) r = { error: `'${norm}' 경로가 실제로 없어서 허용할 수 없어. 폴더 위치를 정확히 알려줘 — 예: 바탕화면이면 "바탕화면/폴더명"처럼.` };
-      else {
-        const fresh = storage.loadAgent(AGENT_ID);
-        if (!fresh) r = { error: '저장 실패' };
-        else {
-          fresh.allowedDirs = fresh.allowedDirs || [];
-          if (!fresh.allowedDirs.some(d => fsTools._norm(d) === norm)) fresh.allowedDirs.push(norm);
-          storage.saveAgent(fresh);
-          r = { granted: true, dir: norm, message: `'${norm}' 폴더 접근을 허용했어. 이어서 작업을 진행해.` };
-        }
+      if (r && r.needGrant) {
+        const gdir = path.dirname(r.needGrant); // 허용은 상위 폴더 단위
+        try { const fr = storage.loadAgent(AGENT_ID); if (fr) { fr.pendingGrant = { kind: 'dir', dir: gdir }; storage.saveAgent(fr); } } catch (_) {}
+        r.message = `'${gdir}' 폴더는 아직 허용 안 됐어. 이건 사용자만 허용할 수 있어(네가 직접 허용 못 함). 사용자에게 "이 폴더에 접근해도 될까요?"라고 묻고, 허락하면 그다음에 다시 시도해.`;
       }
+    }
+    else if (name === 'grant_dir' || name === 'grant_shell') {
+      // 허용은 사용자만 — 모델은 grant를 직접 못 켠다(엔진이 사용자 답으로만 허용). 방어적 거부.
+      r = { error: '폴더·터미널 접근 허용은 사용자만 할 수 있어. 네가 직접 켤 수 없어 — 사용자에게 허락을 구한 뒤 다시 시도해.' };
     }
     else if (name === 'run_shell') {
       const ag = storage.loadAgent(AGENT_ID) || {};
       if (!ag.allowShell && ag.trustLevel !== 'autonomous') {
-        r = { needGrantShell: true, message: '터미널 명령 실행은 아직 허용 안 됐어. 사용자에게 허락을 구하고, 허락하면 grant_shell로 허용한 뒤 다시 시도해.' };
+        try { const fr = storage.loadAgent(AGENT_ID); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); } } catch (_) {}
+        r = { needGrantShell: true, message: '터미널 명령 실행은 아직 허용 안 됐어. 이건 사용자만 허용할 수 있어. 사용자에게 허락을 구하고, 허락하면 다시 시도해.' };
       } else {
         r = procTools.runShell(ag.allowedDirs || [], args && args.command, args && args.cwd);
       }
     }
-    else if (name === 'grant_shell') {
-      const fresh = storage.loadAgent(AGENT_ID);
-      if (!fresh) r = { error: '저장 실패' };
-      else { fresh.allowShell = true; storage.saveAgent(fresh); r = { granted: true, message: '터미널 명령 실행을 허용했어. (파괴적 명령은 여전히 차단.) 이어서 진행해.' }; }
-    }
     else if (name === 'run_code') {
       const ag = storage.loadAgent(AGENT_ID) || {};
       if (!ag.allowShell && ag.trustLevel !== 'autonomous') {
-        r = { needGrantShell: true, message: '코드 실행은 아직 허용 안 됐어. 사용자 허락 후 grant_shell로 허용하고 다시 시도해.' };
+        try { const fr = storage.loadAgent(AGENT_ID); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); } } catch (_) {}
+        r = { needGrantShell: true, message: '코드 실행은 아직 허용 안 됐어. 이건 사용자만 허용할 수 있어. 사용자 허락 후 다시 시도해.' };
       } else {
         r = procTools.runCode(ag.allowedDirs || [], args && args.language, args && args.code, args && args.cwd);
       }
