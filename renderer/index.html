@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Auxo — AI 에이전트 빌더</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ── 스플래시(시동) 화면 — 초기 진입 깜빡임 제거 + 기억모델 백그라운드 워밍업 커버 ── -->
+<div id="splash">
+  <div class="splash-inner">
+    <div class="splash-logo"><img src="icon.png" alt="Auxo"></div>
+    <div class="splash-word">Auxo</div>
+    <div class="splash-bar"><span></span></div>
+  </div>
+</div>
+
+<!-- ── 커스텀 상단바 (드래그 영역 / 우측 140px는 OS 창버튼 자리) ── -->
+<div class="titlebar">
+  <div class="titlebar-menu">
+    <button id="btn-hamburger" class="titlebar-hamburger no-drag" title="메뉴" aria-label="메뉴">☰</button>
+    <div id="app-menu" class="app-menu hidden no-drag">
+      <button id="btn-open-settings" class="app-menu-item">⚙️ 설정</button>
+      <button id="btn-open-notifications" class="app-menu-item">🔔 알림</button>
+      <button id="btn-open-about" class="app-menu-item">💬 문의·소개</button>
+    </div>
+  </div>
+  <div class="titlebar-wordmark">Auxo</div>
+</div>
+
+<!-- ── 온보딩 화면 ──────────────────────────────────────── -->
+<div id="screen-onboarding" class="screen active">
+  <div class="onboard-wrap">
+    <div class="logo-area">
+      <div class="logo-icon"><svg viewBox="0 0 64 64" fill="none" style="width:58%;height:58%" aria-hidden="true"><path d="M18 46 L32 16 L46 46" stroke="#fff" stroke-width="6" stroke-linejoin="round" stroke-linecap="round"/><circle cx="32" cy="38.5" r="4" fill="#fff"/></svg></div>
+      <h1>Auxo</h1>
+      <p class="subtitle">나만의 에이전트를 만들어요</p>
+    </div>
+
+    <!-- 진행바 ①②③ -->
+    <div class="wiz-steps" id="wiz-steps">
+      <div class="wiz-step active" data-step="1"><span class="wiz-dot">1</span><span class="wiz-label">모델 선택</span></div>
+      <div class="wiz-bar"></div>
+      <div class="wiz-step" data-step="2"><span class="wiz-dot">2</span><span class="wiz-label">연결 준비</span></div>
+      <div class="wiz-bar"></div>
+      <div class="wiz-step" data-step="3"><span class="wiz-dot">3</span><span class="wiz-label">이름 짓기</span></div>
+    </div>
+
+    <!-- ━━ STEP 1: 모델 선택 ━━ -->
+    <div class="card onboard-step wiz-page" id="wiz-1">
+      <div class="step-header">
+        <div><div class="step-title">어떤 AI로 연결할까요?</div>
+        <div class="step-sub">구독을 쓰면 추가 요금 없이, API 키로도 연결할 수 있어요.</div></div>
+      </div>
+
+      <div class="brain-options">
+        <label class="brain-card selected" data-value="claude-subscription">
+          <input type="radio" name="brain-mode" value="claude-subscription" checked>
+          <div class="brain-card-inner">
+            <div class="brain-card-title">Claude 구독으로 연결</div>
+            <!-- ★"바로 시작"이라고 쓰면 사실과 다르다. 구독은 각 회사의 연결 프로그램(CLI)이
+                 필요하고 그게 Node.js 위에서 돈다. 고르는 자리에서 준비 부담이 안 보이면
+                 다음 화면에서 막힌다 — 어느 쪽이 쉽다는 얘기가 아니라 **안내가 정확해야 한다**. -->
+            <div class="brain-card-desc">내 Claude 구독 그대로 · 추가 요금 없음<br><span class="brain-card-note">연결 프로그램 설치가 필요해요 (버튼으로 안내)</span></div>
+          </div>
+        </label>
+
+        <label class="brain-card" data-value="codex-subscription">
+          <input type="radio" name="brain-mode" value="codex-subscription">
+          <div class="brain-card-inner">
+            <div class="brain-card-title">Codex 구독으로 연결 (ChatGPT)</div>
+            <div class="brain-card-desc">내 ChatGPT 구독 그대로 · 추가 요금 없음<br><span class="brain-card-note">연결 프로그램 설치가 필요해요 (버튼으로 안내)</span></div>
+          </div>
+        </label>
+
+
+        <label class="brain-card" data-value="gemini-api">
+          <input type="radio" name="brain-mode" value="gemini-api">
+          <div class="brain-card-inner">
+            <div class="brain-card-title">Gemini API 키로 연결</div>
+            <div class="brain-card-desc">내 Google Gemini API 키를 입력해 사용해요.</div>
+          </div>
+        </label>
+
+        <div id="advanced-brain-area">
+          <label class="brain-card" data-value="claude-api">
+            <input type="radio" name="brain-mode" value="claude-api">
+            <div class="brain-card-inner">
+              <div class="brain-card-title">Claude API 키로 연결</div>
+              <div class="brain-card-desc">내 Anthropic API 키로 Claude 사용.</div>
+            </div>
+          </label>
+          <label class="brain-card" data-value="openai-api">
+            <input type="radio" name="brain-mode" value="openai-api">
+            <div class="brain-card-inner">
+              <div class="brain-card-title">GPT (OpenAI) API 키로 연결</div>
+              <div class="brain-card-desc">내 OpenAI API 키로 GPT 사용.</div>
+            </div>
+          </label>
+          <label class="brain-card" data-value="openai-compatible">
+            <input type="radio" name="brain-mode" value="openai-compatible">
+            <div class="brain-card-inner">
+              <div class="brain-card-title">기타 모델 (OpenAI 호환)</div>
+              <div class="brain-card-desc">OpenRouter·Grok·DeepSeek·Mistral 등 OpenAI 호환 API 연결.</div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <button id="wiz1-next" class="btn-primary btn-full btn-start">다음 ›</button>
+
+      <div class="import-area">
+        <p class="import-divider"><span>또는</span></p>
+        <button id="btn-import-agent" class="btn-secondary btn-full">이미 만든 에이전트 가져오기 (파일 열기)</button>
+        <div id="import-status" class="import-status hidden"></div>
+      </div>
+    </div>
+
+    <!-- ━━ STEP 2: 연결 준비 (선택에 따라 분기) ━━ -->
+    <div class="card onboard-step wiz-page hidden" id="wiz-2">
+      <div class="step-header">
+        <div><div class="step-title" id="wiz2-title">연결을 준비할게요</div>
+        <div class="step-sub" id="wiz2-sub"></div></div>
+      </div>
+
+      <!-- A. 구독: 설치/로그인 게이트 -->
+      <div id="prep-sub" class="hidden">
+        <div id="cli-gate" class="cli-gate">
+          <div class="cli-gate-head">
+            <span id="cli-gate-icon">🔌</span>
+            <span id="cli-gate-title">연결 준비를 확인하는 중…</span>
+          </div>
+          <div id="cli-gate-body" class="cli-gate-body"></div>
+        </div>
+      </div>
+
+      <!-- B. API 키: 발급 안내 → 입력 → 테스트 -->
+      <div id="prep-api" class="hidden">
+        <div class="prep-row">
+          <div class="prep-num">1</div>
+          <div class="prep-main">
+            <div class="prep-title">키 발급받기</div>
+            <div class="prep-desc" id="api-issue-desc">발급처에서 키를 만들어요. 처음이면 가입이 필요할 수 있어요.</div>
+            <button id="api-issue-btn" class="btn-secondary btn-sm">발급처 열기 ↗</button>
+          </div>
+        </div>
+
+        <!-- OpenAI 호환: 제공자 프리셋 + base URL -->
+        <div id="onboard-compat-config" class="hidden api-key-wrap">
+          <select id="onboard-compat-preset" class="api-key-input">
+            <option value="openrouter">OpenRouter — 키 1개로 수백 모델</option>
+            <option value="xai">xAI (Grok)</option>
+            <option value="deepseek">DeepSeek — 저렴</option>
+            <option value="mistral">Mistral</option>
+            <option value="groq">Groq — 초고속</option>
+            <option value="custom">직접 입력 (다른 OpenAI 호환 API)</option>
+          </select>
+          <input type="text" id="onboard-base-url" placeholder="API base URL (예: https://openrouter.ai/api/v1)" class="api-key-input">
+          <p class="hint" id="onboard-compat-hint"></p>
+        </div>
+
+        <div class="prep-row">
+          <div class="prep-num">2</div>
+          <div class="prep-main">
+            <div class="prep-title">발급한 키 붙여넣기</div>
+            <div id="api-config-area" class="api-key-wrap">
+              <input type="password" id="api-key" placeholder="API 키 입력" class="api-key-input" autocomplete="off">
+              <p class="hint" id="api-key-hint"></p>
+            </div>
+            <p class="prep-note">🔒 키는 이 PC에만 저장돼요. 외부로 나가지 않아요.</p>
+          </div>
+        </div>
+
+        <!-- ★③단계는 "연결 확인"이 아니라 "쓸 모델 고르기"다.
+             기본 모델을 두지 않으므로(폐기되면 두뇌가 통째로 죽는다) 모델 고르기가 필수 단계다.
+             ★"연결 테스트" 버튼은 두지 않는다 — **목록 조회가 성공했다는 건 키가 유효하다는 뜻**이라
+               같은 일을 두 번 시키는 셈이다. 한 단계가 한 가지만 시킨다. -->
+        <div class="prep-row">
+          <div class="prep-num">3</div>
+          <div class="prep-main">
+            <div class="prep-title">사용할 모델 고르기</div>
+            <div class="prep-desc">키를 확인하고, 지금 쓸 수 있는 모델을 불러와요. <strong>골라야 다음으로 넘어갈 수 있어요.</strong></div>
+            <div class="model-pick">
+              <button id="api-model-load" class="btn-secondary btn-sm" disabled>모델 불러오기</button>
+              <input type="text" id="api-model-search" class="api-key-input hidden" placeholder="모델 검색">
+              <select id="api-model" class="api-key-input hidden" size="6"></select>
+              <!-- OpenAI 호환(OpenRouter 등)은 제공자가 제각각이라 목록 규격을 보장 못 한다 → 직접 입력 -->
+              <input type="text" id="api-model-manual" class="api-key-input hidden" placeholder="모델명 (제공자 문서 참고)">
+              <p class="hint" id="api-model-msg"></p>
+            </div>
+            <div id="api-test-result" class="api-test-result hidden"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="wiz-nav">
+        <button id="wiz2-back" class="btn-secondary">‹ 뒤로</button>
+        <button id="wiz2-next" class="btn-primary" disabled>다음 ›</button>
+      </div>
+    </div>
+
+    <!-- ━━ STEP 3: 이름 짓고 시작 ━━ -->
+    <div class="card onboard-step wiz-page hidden" id="wiz-3">
+      <div class="step-header">
+        <div><div class="step-title">에이전트에게 이름을 지어줘요</div>
+        <div class="step-sub">연결이 끝났어요. 이제 이름만 지으면 만나요.</div></div>
+      </div>
+      <input type="text" id="agent-name" placeholder="예: 루나" maxlength="20" class="name-input-big">
+      <div class="wiz-nav">
+        <button id="wiz3-back" class="btn-secondary">‹ 뒤로</button>
+        <button id="btn-create-agent" class="btn-primary">에이전트 만나러 가기</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── 대화 화면 ────────────────────────────────────────── -->
+<div id="screen-chat" class="screen">
+  <div class="chat-layout">
+
+    <!-- 왼쪽: 에이전트 정보 -->
+    <aside class="sidebar">
+      <div class="sidebar-header profile">
+        <div class="agent-avatar" id="sidebar-avatar">A</div>
+        <div class="profile-meta">
+          <div class="agent-name-label" id="sidebar-name">에이전트 이름</div>
+          <span class="agent-mode-label brain" id="sidebar-mode"><span class="brain-dot"></span></span>
+        </div>
+      </div>
+
+      <!-- 기억 목록은 화면에 두지 않는다(조회·정정·삭제는 전부 대화로 — remember/forget).
+           껍데기 DOM 을 "참조 오류 방지"로 남겨두면 죽은 코드를 살아 있는 것으로 읽게 되므로,
+           참조하던 코드와 함께 지웠다.
+           페르소나 표시(#memory-persona)만 설정 저장 후 갱신에 쓰이므로 남긴다. -->
+      <div class="memory-panel" style="display:none" aria-hidden="true">
+        <p id="memory-persona" class="memory-text">-</p>
+      </div>
+
+      <!-- 활용 허브: 에이전트를 잘 쓰게 해주는 기능 메뉴 -->
+      <nav class="sidebar-nav">
+        <div class="nav-label">메뉴</div>
+        <button id="nav-chat" class="nav-item active" title="현재 대화 화면">
+          <span class="nav-item-icon">💬</span>
+          <span class="nav-item-label">대화</span>
+        </button>
+        <button id="nav-skills" class="nav-item" title="능력 — 기본 능력 + 스킬·MCP 추가">
+          <span class="nav-item-icon">✨</span>
+          <span class="nav-item-label">능력</span>
+        </button>
+
+        <!-- L1 "일" 섹션은 상시 UI 로 두지 않는다: 친구 컨셉을 지키기 위해서.
+             일 시작은 대화(사용자가 "프로젝트로 하자")→도구 자동 호출로 처리.
+             백엔드·도구·app.js 핸들러는 그대로(전부 null 가드)라 필요 시 복원 가능. -->
+      </nav>
+
+      <!-- 번호를 여기 적지 않는다. app.js 가 실제 앱 버전으로 채운다(app:info).
+           예전엔 `v0.1.0` 이 글자로 박혀 있어 package.json 을 올려도 화면은 안 바뀌었다. -->
+      <div class="sidebar-foot" id="sidebar-version">로컬 실행 중</div>
+
+    </aside>
+
+    <!-- 오른쪽: 대화 영역 -->
+    <main class="chat-main">
+      <div class="chat-head">
+        <div class="chat-head-av" id="chat-head-avatar">AL</div>
+        <span class="chat-head-name" id="chat-head-name">에이전트 이름</span>
+        <div class="status"><span class="status-live"></span>연결됨</div>
+      </div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-welcome">
+          <p id="welcome-text">안녕하세요! 대화를 시작해보세요.</p>
+        </div>
+      </div>
+
+      <div class="chat-input-area">
+        <div id="attach-preview" class="attach-preview hidden"></div>
+        <div class="input-row">
+          <input type="file" id="attach-input" multiple style="display:none">
+          <button id="btn-attach" class="btn-attach" title="파일 첨부 (이미지·PDF·문서 등)">+</button>
+          <textarea
+            id="chat-input"
+            placeholder="에이전트에게 메시지 보내기…"
+            rows="1"
+          ></textarea>
+          <button id="btn-send" class="btn-send">↑</button>
+        </div>
+        <div class="composer-hint">에이전트가 실수할 수 있어요. 중요한 작업은 한 번 더 확인하세요.</div>
+      </div>
+    </main>
+
+  </div>
+</div>
+
+<!-- ── 에이전트 설정 화면 ─────────────────────────────────── -->
+<div id="screen-settings" class="modal-screen">
+  <div class="settings-layout">
+    <button class="modal-close" aria-label="닫기" title="닫기 (Esc)">✕</button>
+
+    <div class="settings-header">
+      <h2>에이전트 설정</h2>
+    </div>
+
+    <div class="settings-body">
+
+      <nav class="settings-tabs" role="tablist" aria-label="설정 분류">
+        <button type="button" class="stab active" data-tab="general">일반</button>
+        <button type="button" class="stab" data-tab="model">AI 모델</button>
+        <button type="button" class="stab" data-tab="connect">연결</button>
+        <button type="button" class="stab" data-tab="data">데이터</button>
+      </nav>
+
+      <div class="tab-panel active" data-panel="general">
+
+      <!-- 프로필 사진 (일반: 외관·정체성) -->
+      <div class="settings-section" id="section-avatar">
+        <h3 class="settings-section-title">프로필 사진</h3>
+        <p class="hint">에이전트의 아바타 이미지를 올려요. 없으면 이름 이니셜이 표시돼요.</p>
+        <div class="avatar-setting-row">
+          <div class="avatar-preview-wrap">
+            <div class="avatar-preview" id="settings-avatar-preview">?</div>
+          </div>
+          <div class="avatar-setting-actions">
+            <input type="file" id="avatar-file-input" accept="image/*" style="display:none">
+            <button id="btn-avatar-change" class="btn-secondary">사진 변경</button>
+            <button id="btn-avatar-delete" class="btn-ghost">삭제</button>
+          </div>
+        </div>
+        <p class="hint" id="avatar-status-hint"></p>
+      </div>
+
+      <!-- 외관 (테마) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">외관 (테마)</h3>
+        <div class="theme-toggle" role="group" aria-label="테마 선택">
+          <button id="theme-dark" class="theme-btn active" type="button">🌙 다크</button>
+          <button id="theme-light" class="theme-btn" type="button">☀️ 라이트</button>
+        </div>
+        <p class="hint">앱 전체 색을 바꿔요. 선택은 이 기기에 저장돼 다음에도 유지돼요. (기본: 다크)</p>
+      </div>
+
+      <!-- 사용자 지침 (AUXO.md) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">지침 (AUXO.md)</h3>
+        <textarea id="settings-auxomd" rows="6" placeholder="에이전트가 항상 지킬 규칙·지침을 자유롭게 써주세요.&#10;예) 답변은 항상 핵심부터 요약해줘.&#10;예) 코드는 파이썬으로, 주석은 한국어로.&#10;예) 외부로 메시지 보내기 전엔 꼭 확인해."></textarea>
+        <p class="hint">내 에이전트만의 규칙이에요. 평소 행동·말투·형식에 반영돼요.</p>
+      </div>
+
+      <!-- 도구 사용 자율도 (승인 정도) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">도구 사용 자율도</h3>
+        <select id="settings-trust" class="api-key-input">
+          <option value="ask_all">매번 물어봄 (모든 변경 작업에 확인)</option>
+          <option value="ask_risky">위험 작업만 물어봄 (기본 — 쓰기·삭제 등만 확인)</option>
+          <option value="autonomous">알아서 진행 (확인 없이 바로 실행)</option>
+        </select>
+        <p class="hint">에이전트가 파일을 만들거나 바꾸는 등 <b>실제 변경</b>을 할 때 어디까지 먼저 확인할지 정해요. 신뢰하는 에이전트는 '알아서 진행'으로 두면 매번 안 물어봐요.</p>
+      </div>
+
+      </div><!-- /panel general -->
+
+      <div class="tab-panel" data-panel="model">
+
+      <!-- AI 모델(LLM) 연결 -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">AI 모델 (LLM) 연결</h3>
+        <select id="settings-brain" class="api-key-input">
+          <option value="claude-subscription">Claude 구독</option>
+          <option value="codex-subscription">Codex 구독 (ChatGPT)</option>
+          <option value="gemini-api">Gemini API</option>
+          <option value="claude-api">Claude API</option>
+          <!-- 다른 항목이 "Gemini API"·"Claude API" 이므로 여기도 API 를 붙여 통일한다. -->
+          <option value="openai-api">GPT (OpenAI) API</option>
+          <option value="openai-compatible">기타 모델 (OpenAI 호환)</option>
+        </select>
+        <!-- OpenAI 호환: 제공자 프리셋 + base URL (openai-compatible 선택 시만 표시) -->
+        <div id="settings-compat-config" class="hidden api-key-wrap">
+          <select id="settings-compat-preset" class="api-key-input">
+            <option value="openrouter">OpenRouter — 키 1개로 수백 모델</option>
+            <option value="xai">xAI (Grok)</option>
+            <option value="deepseek">DeepSeek — 저렴</option>
+            <option value="mistral">Mistral</option>
+            <option value="groq">Groq — 초고속</option>
+            <option value="custom">직접 입력 (다른 OpenAI 호환 API)</option>
+          </select>
+          <input type="text" id="settings-base-url" placeholder="API base URL (예: https://openrouter.ai/api/v1)" class="api-key-input">
+          <p class="hint" id="settings-compat-hint"></p>
+        </div>
+        <div id="settings-api-config" class="hidden api-key-wrap">
+          <input type="password" id="settings-api-key" placeholder="API 키 입력" class="api-key-input" autocomplete="off">
+          <!-- 온보딩과 같은 구조(모델 고르기). 설명은 index.html 온보딩 쪽 주석 참고. -->
+          <div class="model-pick">
+            <button id="settings-model-load" class="btn-secondary btn-sm">모델 불러오기</button>
+            <input type="text" id="settings-model-search" class="api-key-input hidden" placeholder="모델 검색">
+            <select id="settings-model" class="api-key-input hidden" size="6"></select>
+            <input type="text" id="settings-model-manual" class="api-key-input hidden" placeholder="모델명 (제공자 문서 참고)">
+            <p class="hint" id="settings-model-msg"></p>
+          </div>
+          <p class="hint" id="settings-api-hint"></p>
+        </div>
+      </div>
+
+      </div><!-- /panel model -->
+
+      <div class="tab-panel" data-panel="connect">
+
+      <!-- 메신저 연결 (텔레그램) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">텔레그램으로 연결</h3>
+        <p class="hint">이 에이전트를 텔레그램에서도 만날 수 있어요. 앱이 켜져 있는 동안 작동해요.</p>
+        <div id="tg-disconnected">
+          <ol class="tg-steps">
+            <li>텔레그램 앱에서 <b>@BotFather</b> 를 찾아 대화 시작 → <b>/newbot</b> 으로 봇 만들기</li>
+            <li>BotFather 가 준 <b>토큰</b>(긴 문자열)을 아래에 붙여넣기</li>
+          </ol>
+          <button id="tg-help-btn" class="btn-secondary btn-sm">BotFather 여는 법 ↗</button>
+          <input type="password" id="tg-token" placeholder="봇 토큰 붙여넣기 (1234567:ABC...)" class="api-key-input" autocomplete="off">
+          <button id="tg-connect-btn" class="btn-primary btn-full">연결하기</button>
+          <div id="tg-connect-result" class="api-test-result hidden"></div>
+        </div>
+        <div id="tg-connected" class="hidden">
+          <div class="tg-connected-box">✅ <b id="tg-username"></b> 와 연결됨 — 텔레그램에서 이 에이전트와 대화할 수 있어요.</div>
+          <button id="tg-disconnect-btn" class="btn-secondary btn-full">연결 해제</button>
+        </div>
+      </div>
+
+      <!-- 메신저 연결 (디스코드) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">디스코드로 연결</h3>
+        <p class="hint">이 에이전트를 디스코드에서도 만날 수 있어요. 앱이 켜져 있는 동안 작동해요.</p>
+        <div id="dc-disconnected">
+          <ol class="tg-steps">
+            <li>Discord <a class="ext-link" data-url="https://discord.com/developers/applications"><b>개발자 포털 ↗</b></a>에서 <b>New Application</b> → 왼쪽 <b>Bot</b> 메뉴로 봇 만들기</li>
+            <li>Bot 화면에서 <b>Reset Token</b>으로 토큰을 받고, <b>Message Content Intent</b>를 켠 뒤 토큰을 아래에 붙여넣기</li>
+          </ol>
+          <button id="dc-help-btn" class="btn-secondary btn-sm">개발자 포털 열기 ↗</button>
+          <input type="password" id="dc-token" placeholder="봇 토큰 붙여넣기" class="api-key-input" autocomplete="off">
+          <button id="dc-connect-btn" class="btn-primary btn-full">연결하기</button>
+          <div id="dc-connect-result" class="api-test-result hidden"></div>
+        </div>
+        <div id="dc-connected" class="hidden">
+          <div class="tg-connected-box">✅ <b id="dc-username"></b> 와 연결됐어요!</div>
+          <div class="hint dc-guide" id="dc-guide"></div>
+          <button id="dc-disconnect-btn" class="btn-secondary btn-full">연결 해제</button>
+        </div>
+      </div>
+
+      </div><!-- /panel connect -->
+
+      <div class="tab-panel" data-panel="data">
+
+      <!-- 에이전트 관리 (내보내기) — 단일 에이전트 정책: '새 에이전트 만들기'는 두지 않는다 -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">내보내기</h3>
+        <p class="hint">지금까지의 대화와 기억을 파일로 보관해요.</p>
+        <!-- '인격만/완전백업' 라디오와 '사적인 기억 빼고' 체크박스는 두지 않는다.
+             ①백업은 전부 담아야 백업이다 — '인격만'을 골라 저장하면 나중에 불러올 때 대화가 사라지는데,
+               거기에 '추천' 배지까지 붙어 있었다(데이터 잃는 길을 권하고 있었다).
+             ②'사적인 기억 빼고'는 지키지 못하는 약속이었다 — 건강 정보는 애초에 제외 대상이 아니고
+               (추출 규칙상 sensitive=false 강제), 대화 원문은 걸러내지도 않는다. 실측: '당뇨'가
+               체크한 결과물에 기억 2회·대화 4회 그대로 남았다. 설계 당시에도 "완벽하지 않으니 안내
+               권장"으로 적혀 있었는데 그 안내가 화면에 없었다 → 거짓 안심만 남았다.
+             그래서 고르게 하는 대신 무엇이 담기는지 알린다. -->
+        <p class="hint export-secure">🔒 비밀번호와 API 키는 저장되지 않아요.</p>
+        <div class="agent-manage-actions">
+          <button id="btn-export" class="btn-secondary btn-full">파일 하나로 저장하기</button>
+          <p class="hint" style="margin-top:6px">나중에 이 앱에 다시 불러올 수 있어요</p>
+          <div id="export-path" class="export-path hidden"></div>
+
+          <button id="btn-export-md" class="btn-secondary btn-full" style="margin-top:16px">읽을 수 있는 글로 저장하기</button>
+          <p class="hint" style="margin-top:6px">메모장으로 열어보거나 다른 AI에게 넘길 수 있어요</p>
+          <div id="export-md-path" class="export-path hidden"></div>
+
+          <p class="hint export-notice">두 방법 모두 <b>대화와 기억이 전부 담깁니다.</b> 건강처럼
+          민감한 내용도 들어가니, 남에게 보내거나 다른 AI에 올릴 때는 한 번 살펴봐 주세요.</p>
+        </div>
+      </div>
+
+      <!-- '도움말·문의'는 여기 두지 않는다. 설정>데이터 맨 아래는 찾기 어려운 자리다.
+           도네이션 화면을 만들 때 그쪽에 함께 넣는다. 문의 메일 주소 = hello@getauxo.app -->
+
+      </div><!-- /panel data -->
+
+      <div class="settings-footer">
+        <button id="btn-settings-save" class="btn-primary btn-full">저장하기</button>
+        <p class="settings-save-hint hidden" id="settings-save-hint">저장됐어요!</p>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── 능력 화면 (스킬·MCP·환경점검) ──────────────────────── -->
+<div id="screen-abilities" class="modal-screen">
+  <div class="settings-layout">
+    <button class="modal-close" aria-label="닫기" title="닫기 (Esc)">✕</button>
+
+    <div class="settings-header">
+      <h2>능력</h2>
+    </div>
+
+    <div class="settings-body">
+
+      <nav class="settings-tabs" role="tablist" aria-label="능력 분류">
+        <button type="button" class="stab active" data-tab="base">기본 능력</button>
+        <button type="button" class="stab" data-tab="skills">스킬 <span id="settings-skill-count" class="badge">0</span></button>
+        <button type="button" class="stab" data-tab="mcp">MCP <span id="settings-mcp-count" class="badge">0</span></button>
+      </nav>
+
+      <div class="tab-panel active" data-panel="base">
+
+      <!-- 기본 능력 (항상 켜져 있음 — 대화하면 알아서 씀) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title" style="display:flex; align-items:baseline; gap:6px; flex-wrap:wrap">기본 능력 <span class="hint" style="font-weight:normal">· 항상 켜져 있어요</span></h3>
+        <p class="hint">따로 설치할 필요 없이, 대화하면 에이전트가 알아서 사용해요.</p>
+        <ul class="ability-base-list">
+          <li><span class="ability-ic">🧠</span> <b>기억</b> — 중요한 걸 기억하고 떠올려요</li>
+          <li><span class="ability-ic">🔎</span> <b>웹 검색</b> — 인터넷에서 최신 정보를 찾아요</li>
+          <li><span class="ability-ic">📁</span> <b>파일</b> — 허락한 폴더에서 파일을 읽고 써요</li>
+          <li><span class="ability-ic">⌨️</span> <b>터미널</b> — 허락한 폴더에서 명령을 실행해요</li>
+          <li><span class="ability-ic">💻</span> <b>코드 실행</b> — 파이썬·자바스크립트 코드를 돌려요</li>
+          <li><span class="ability-ic">🎙️</span> <b>음성 이해</b> — 보낸 음성 파일을 알아듣고 글로 옮겨요</li>
+        </ul>
+
+        <div class="settings-sub" style="margin-top:14px">웹 검색 품질 <span class="hint" style="font-weight:normal">(선택)</span></div>
+        <p class="hint">기본은 무료 검색이에요. 더 정확한 검색을 원하면 무료 키를 넣으세요.</p>
+        <select id="settings-search-provider" class="api-key-input">
+          <option value="duckduckgo">기본 (무료 · 키 불필요)</option>
+          <option value="naver">네이버 (한국 결과 강함 · 무료 키)</option>
+          <option value="tavily">Tavily (글로벌 · 무료 키)</option>
+        </select>
+        <div id="search-key-naver" class="hidden api-key-wrap">
+          <input type="text" id="settings-naver-id" placeholder="네이버 Client ID" class="api-key-input" autocomplete="off">
+          <input type="password" id="settings-naver-secret" placeholder="네이버 Client Secret" class="api-key-input" autocomplete="off">
+          <p class="hint"><a href="https://developers.naver.com/apps/#/register" target="_blank">네이버 개발자센터에서 검색 API 무료 발급 ↗</a></p>
+        </div>
+        <div id="search-key-tavily" class="hidden api-key-wrap">
+          <input type="password" id="settings-tavily-key" placeholder="Tavily API 키 (tvly-...)" class="api-key-input" autocomplete="off">
+          <p class="hint"><a href="https://app.tavily.com" target="_blank">tavily.com에서 무료 키 발급 ↗</a></p>
+        </div>
+        <button id="btn-save-search" class="btn-secondary btn-full" style="margin-top:8px">검색 설정 저장</button>
+      </div>
+
+      </div><!-- /panel base -->
+
+      <div class="tab-panel" data-panel="skills">
+
+      <!-- 환경 점검 상태줄 (문제 있을 때만 펼쳐짐 — renderEnv가 채움) -->
+      <details class="env-bar acc"></details>
+
+      <!-- 스킬 (SKILL.md 패키지) -->
+      <div class="settings-section" id="settings-capabilities">
+        <h3 class="settings-section-title">스킬 (SKILL.md)</h3>
+        <p class="hint">SKILL.md가 든 폴더를 가져와 설치하면, 에이전트가 관련 작업에서 스스로 펼쳐 사용해요.</p>
+        <ul id="settings-skills-list" class="settings-skills-list"></ul>
+        <button id="btn-import-skill" class="btn-secondary btn-full">+ 스킬 가져오기 (폴더)</button>
+      </div>
+
+      </div><!-- /panel skills -->
+
+      <div class="tab-panel" data-panel="mcp">
+
+      <!-- 환경 점검 상태줄 (문제 있을 때만 펼쳐짐 — renderEnv가 채움) -->
+      <details class="env-bar acc"></details>
+
+      <!-- MCP 서버 (도구 확장) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">MCP 서버 (도구 확장)</h3>
+        <p class="hint">MCP 서버를 등록하면 그 도구를 에이전트가 사용해요. 명령을 실행하므로 <b>신뢰하는 것만</b> 등록하세요.</p>
+        <ul id="settings-mcp-list" class="settings-skills-list"></ul>
+
+        <div class="mcp-quick">
+          <div class="settings-sub">빠른 추가 (카탈로그)</div>
+          <p class="hint">대화로 "○○ 할 수 있는 도구 붙여줘"라고 해도 토르가 찾아 설치합니다. 아래는 직접 고르는 방법이에요.</p>
+          <div id="mcp-catalog-list" class="settings-skills-list"></div>
+        </div>
+
+        <!-- '직접 추가(명령/JSON)'은 두지 않는다: 신뢰검사 없이 임의 명령을 등록하는 우회 통로가 된다.
+             MCP 확장은 능력 메뉴(빠른 추가) + 에이전트 대화(find_mcp→install_mcp, 신뢰 스코프만)로 일원화. -->
+      </div>
+
+      </div><!-- /panel mcp -->
+
+    </div>
+
+  </div>
+</div>
+
+<!-- ── 알림 화면 ─────────────────────────────────────────── -->
+<div id="screen-notifications" class="modal-screen">
+  <div class="settings-layout">
+    <button class="modal-close" aria-label="닫기" title="닫기 (Esc)">✕</button>
+
+    <div class="settings-header">
+      <h2>알림</h2>
+      <p class="settings-sub">새 소식과 받은 알림을 모아봐요</p>
+    </div>
+
+    <div class="settings-body">
+
+      <!-- 받은 소식 (향후) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">받은 소식</h3>
+        <ul id="notifications-list" class="settings-skills-list">
+          <li class="fact-empty">아직 받은 소식이 없어요.</li>
+        </ul>
+      </div>
+
+      <!-- 알림 설정 (공지·업데이트 안테나) -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">알림 설정</h3>
+        <label class="skill-toggle"><input type="checkbox" id="settings-notice-off"> 새 소식·업데이트 확인 받지 않기</label>
+        <p class="hint">앱이 가끔 새 소식(업데이트·플랫폼 안내)을 확인해 알려줘요. 개인정보는 보내지 않고 받기만 합니다. 끄면 확인하지 않아요.</p>
+      </div>
+
+      <!-- 업데이트 상태 — 잘 되고 있는지 사용자가 직접 볼 수 있어야 한다 -->
+      <div class="settings-section">
+        <h3 class="settings-section-title">업데이트</h3>
+        <p class="hint" id="settings-update-current">지금 버전을 확인하는 중…</p>
+        <p class="hint" id="settings-update-state">아직 확인하지 않았어요</p>
+        <button id="settings-update-check" class="btn-secondary btn-sm">지금 확인</button>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<!-- ── 문의·소개 (햄버거 메뉴) ────────────────────────────
+     설정>데이터 맨 아래 묻혀 있던 '도움말·문의'를 여기로 옮겼다.
+     후원 버튼은 넣지 않는다 — 무료 포지셔닝을 굳혀 나중에 값을 매기기 어려워지므로. -->
+<div id="screen-about" class="modal-screen">
+  <div class="settings-layout">
+    <button class="modal-close" aria-label="닫기" title="닫기 (Esc)">✕</button>
+
+    <div class="settings-header">
+      <h2>문의·소개</h2>
+    </div>
+
+    <div class="settings-body">
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">Auxo를 만든 이야기</h3>
+        <p class="hint">AI 에이전트가 좋다는 얘기는 많은데, 막상 써보려면 터미널을 켜고 설정을
+        만지고 키를 넣어야 했어요. 개발자가 아니면 시작부터 막힙니다.</p>
+        <p class="hint" style="margin-top:8px">그게 아쉬워서 만들었어요. 내려받아 이름 하나
+        지어주면 시작이고, 그다음은 그냥 이야기하면 됩니다.</p>
+        <p class="hint" style="margin-top:8px">대화도 기억도 이 컴퓨터에만 남습니다. 우리 서버로
+        보내지 않아요. 어떤 AI를 쓸지 직접 고르시고, 나중에 바꾸셔도 기억은 그대로 남습니다.</p>
+      </div>
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">문의</h3>
+        <p class="hint">궁금한 점이나 안 되는 게 있으면 편하게 메일 주세요.
+        개선 의견도 언제든 보내주세요.</p>
+        <p style="font-size:15px;margin-top:6px"><a href="mailto:hello@getauxo.app">hello@getauxo.app</a>
+          &nbsp;·&nbsp; <a href="#" id="link-github-issue">GitHub에 알리기 ↗</a></p>
+
+        <!-- 문제 기록 — 안 될 때 원인을 찾으려면 이게 필요하다.
+             ★자동으로 보내지 않는다. 파일로 받아서 **직접 열어 보고** 사용자가 보낼지 정한다.
+               (개인정보 방침: "우리가 수집하거나 보관하는 것은 없습니다" — 그 약속과 어긋나면 안 된다) -->
+        <p class="hint" style="margin-top:14px">문제가 있었다면 <b>문제 기록</b>을 함께 보내주시면
+          원인을 훨씬 빨리 찾을 수 있어요. 파일로 저장해서 열어보실 수 있고,
+          대화 내용·기억·비밀번호 같은 건 담기지 않아요.</p>
+        <button id="btn-save-errorlog" class="btn-secondary" style="margin-top:6px">문제 기록 파일로 저장</button>
+        <p class="hint" id="errorlog-result" style="margin-top:6px"></p>
+      </div>
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">더 보기</h3>
+        <p class="hint">
+          <a class="ext-link" data-url="https://getauxo.app">홈페이지 ↗</a>
+          &nbsp;·&nbsp;
+          <a class="ext-link" data-url="https://getauxo.app/faq.html">자주 묻는 질문 ↗</a>
+          &nbsp;·&nbsp;
+          <a class="ext-link" data-url="https://getauxo.app/privacy.html">데이터·개인정보 ↗</a>
+        </p>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
