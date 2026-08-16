@@ -1,0 +1,36 @@
+{
+  "meta": {
+    "name": "Auxo MCP 카탈로그 (부트스트랩)",
+    "version": "0.1",
+    "compiledAt": "2026-06-18",
+    "note": "에이전트 find_mcp 가 참조하는 신뢰 MCP 색인. menu!==false 항목만 능력 메뉴 '빠른 추가'에 노출(추가만으로 바로 되는 것). 나머지(키 입력·비공식 등)는 사용자가 대화로 요청하면 에이전트가 찾아 안내·설치. 원격 OAuth(mcp-remote) 방식은 클라이언트 호환성 문제로 제외 — 필요 시 개별 검증 후 재등록. args의 {{key}}는 params 로 치환."
+  },
+  "servers": [
+    {
+      "id": "playwright", "name": "브라우저 자동화(Playwright)",
+      "description": "실제 브라우저로 웹 열기·클릭·스크린샷·폼 입력. 키 불필요.",
+      "command": "npx", "args": ["-y", "@playwright/mcp@latest"], "params": [],
+      "requires": ["node"],
+      "setup": { "label": "브라우저(Chromium) 설치", "command": "npx", "args": ["-y", "playwright", "install", "chromium"] },
+      "note": "npx 필요. 첫 사용 전 'Chromium 설치' 버튼을 눌러두면 좋아요."
+    },
+    {
+      "id": "sequential-thinking", "name": "순차적 사고",
+      "description": "복잡한 문제를 단계적으로 쪼개 추론하도록 돕는 도구. 키 불필요.",
+      "command": "npx", "args": ["-y", "@modelcontextprotocol/server-sequential-thinking"], "params": [],
+      "note": "npx 필요."
+    },
+    {
+      "id": "google-workspace", "name": "Google (Gmail·캘린더·드라이브) — 비공식·고급",
+      "description": "Gmail·Google Calendar·Google Drive 연동(비공식 개인 개발자 서버). 메일 확인·일정 등록·문서 작업.",
+      "command": "npx", "args": ["-y", "@aaronsb/google-workspace-mcp"],
+      "env": { "GOOGLE_CLIENT_ID": "{{clientId}}", "GOOGLE_CLIENT_SECRET": "{{clientSecret}}" },
+      "params": [
+        { "key": "clientId", "label": "Google OAuth Client ID", "required": true, "example": "xxxx.apps.googleusercontent.com" },
+        { "key": "clientSecret", "label": "Google OAuth Client Secret", "required": true }
+      ],
+      "requires": ["node"], "official": false, "menu": false,
+      "note": "⚠️ 비공식(개인 개발자 @aaronsb) 서버 + 고급: Google Cloud Console에서 OAuth 클라이언트를 발급해 ID/Secret을 넣어야 해요. 첫 사용 시 브라우저로 Google 로그인 동의. menu:false = 능력 메뉴엔 안 띄우고, 사용자가 대화로 요청하면 에이전트가 찾아 안내·설치."
+    }
+  ]
+}
