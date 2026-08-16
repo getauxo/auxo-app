@@ -36,6 +36,22 @@ AI 에이전트는 점점 똑똑해지는데, 개발을 모르면 선뜻 다가�
 - Windows 10 / 11 (64비트) — macOS 버전은 준비 중입니다.
 - AI 모델 연결: 구독(Claude·ChatGPT 등) 또는 API 키 중 하나
 
+## 터미널(CLI)에서 쓰기 — 선택
+
+앱과 별개로, 터미널에서 쓰는 방법도 있습니다. **앱과는 기억이 분리된 독립 공간**입니다.
+
+```
+git clone https://github.com/getauxo/auxo-app.git
+cd auxo-app
+npm install --omit=dev
+npm run cli
+```
+
+- **[Node.js](https://nodejs.org) 18 이상**이 필요합니다.
+- `--omit=dev` 는 **빌드용 도구를 빼고** 실행에 필요한 것만 받습니다.
+  빼지 않으면 설치가 두 배로 무거워지고, 쓰지도 않을 도구의 보안 경고까지 함께 뜹니다.
+- macOS·Linux 에서도 이 방법으로 쓸 수 있습니다.
+
 ## 링크
 
 - 홈페이지·내려받기: https://getauxo.app

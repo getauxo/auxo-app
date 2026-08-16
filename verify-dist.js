@@ -4,7 +4,7 @@
  * 왜 필요한가:
  *   package.json build.files 의 제외 목록(`!discord-bot.js` 등)과 소스의 require() 가
  *   어긋나면, 배포본은 빌드에 "성공"하지만 실행 즉시 죽는다.
- *   실제로 2026-07-09 배포본이 `Cannot find module './discord-bot'` 로 깨졌다.
+ *   실제로 배포본이 `Cannot find module './discord-bot'` 로 깨진 적이 있다.
  *   (main.js 가 discord-bot 을 require 하게 된 뒤에도 제외 목록이 그대로였다.)
  *
  * 무엇을 하나:
@@ -73,7 +73,7 @@ if (leaked.length) fail(`민감 파일이 배포본에 포함됨: ${leaked.join(
 else ok('민감 파일 없음');
 
 // ── 4. 개발 부산물이 섞이지 않았는가 ────────────────────────
-// 2026-07-10: .patch-backup-20260708/(옛 main.js 사본 284KB)가 배포본에 딸려 들어가 있었다.
+// .patch-backup-*/(옛 소스 사본)가 배포본에 딸려 들어간 적이 있다.
 // build.files 제외는 "적어둔 것만" 막으므로, 결과물을 직접 본다.
 const JUNK_PATTERNS = [
   /^\.patch-backup/i, /\.bak(-|$)/i, /^_.*test/i, /^evidence$/i,

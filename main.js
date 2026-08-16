@@ -1,8 +1,18 @@
 /**
  * main.js — Electron 메인 프로세스
  */
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, Notification, nativeImage } = require('electron');
 const path = require('path');
+
+// 토스트(푸시) 알림 아이콘 = 새 로고. asar 안 경로를 OS가 못 읽을 수 있어 nativeImage로 메모리에 실어 전달(경로 지정 방식보다 안전). 1회 로드 후 캐시.
+let _notiIcon = null;
+function notiIcon() {
+  if (_notiIcon === null) {
+    try { const img = nativeImage.createFromPath(path.join(__dirname, 'icon.png')); _notiIcon = (img && !img.isEmpty()) ? img : undefined; }
+    catch (_) { _notiIcon = undefined; }
+  }
+  return _notiIcon;
+}
 const fs = require('fs');
 const { spawn } = require('child_process');
 const storage = require('./storage');
@@ -11,7 +21,6 @@ const brainGemini = require('./brain-gemini');
 const brainAnthropic = require('./brain-anthropic');
 const brainOpenai = require('./brain-openai');
 const brainCodex = require('./brain-codex');
-const brainAntigravity = require('./brain-antigravity');
 const botTelegram = require('./bot-telegram');
 const botDiscord = require('./discord-bot');
 const engine = require('./engine'); // 예약 작업 실행용(채널 무관 엔진)
@@ -55,8 +64,13 @@ const APP_VERSION = (() => { try { return require('./package.json').version || '
 
 // ── 오류 기록(파일) ─────────────────────────────────────────
 // 배포본엔 콘솔 창이 없고 위에서 console.error 도 숨긴다 → 사용자 PC에서 무엇이 실패했는지
-// 알 길이 없었다(2026-07-10 테스터 "생각을 정리하는 중" 무한 반복, 원인 추적 불가).
-// 앱 폴더의 auxo-error.log 에 남겨 테스터가 그대로 보내줄 수 있게 한다. 개인정보는 담지 않는다.
+// 알 길이 없다(예: "생각을 정리하는 중"이 무한 반복돼도 원인 추적 불가).
+// 앱 폴더의 auxo-error.log 에 남겨 **사용자가 그대로 보내줄 수 있게** 한다. 개인정보는 담지 않는다.
+//   ★이걸 보낼 사람은 **실사용자**다. 그래서 이 로그는 "우리끼리 보는 것"이 아니라
+//   **모르는 사람이 통째로 보내도 안전해야** 한다.
+//   실측: 홈 경로·이메일·API키·토큰·에이전트id·대화 조각 **전부 0건**.
+//   ⚠️ 새로 logError 를 부르는 자리를 만들 때는 **경로·대화 내용이 err.message 에 섞이지 않는지** 보고 넣는다.
+//      (파일 도구·MCP 설치 실패 등은 경로가 메시지에 들어가기 쉽다 — 아직 그 표본은 못 봤다)
 let _errLogPath = null;
 function errorLogPath() {
   if (_errLogPath) return _errLogPath;
@@ -73,9 +87,6 @@ function brainDiag(brainMode) {
     }
     if (brainMode === 'codex-subscription') {
       return `codex cli: installed=${brainCodex.isAvailable()} loggedIn=${!!brainCodex.loginStatus().loggedIn}`;
-    }
-    if (brainMode === 'antigravity-subscription') {
-      return `agy cli: installed=${brainAntigravity.isAvailable()} loggedIn=${!!brainAntigravity.loginStatus().loggedIn}`;
     }
   } catch (e) { return `diag 실패: ${e.message}`; }
   return '';
@@ -101,6 +112,10 @@ ipcMain.handle('notice:setOff', async (e, off) => {
   return { ok: true, off: notice.setOff(d, off) };
 });
 ipcMain.handle('notice:getOff', async () => ({ off: notice.isOff(noticeDir() || '') }));
+// 앱 버전 — 화면 구석에 보여준다. ★예전엔 index.html 에 `v0.1.0` 이 **글자로 박혀 있어서**,
+//   package.json 을 올려도 화면은 옛 번호 그대로였다. 사용자가 자기 버전을 잘못 알면
+//   "고쳤다는데 왜 그대로냐" 같은 문의를 되풀이하게 된다 → 실제 값을 준다.
+ipcMain.handle('app:info', () => ({ version: APP_VERSION }));
 
 async function checkNotice() {
   const d = noticeDir(); if (!d) return;
@@ -108,6 +123,66 @@ async function checkNotice() {
   if (n && mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('notice:update', { notice: n, appVersion: APP_VERSION });
   }
+}
+
+// 설치가 끝난 뒤에도 받아둔 설치본이 캐시에 그대로 남는다(실측: 업데이트 1회에 510MB).
+//   우리 앱이 원래 큰 편이라 그냥 두면 사용자 디스크를 계속 먹는다.
+//   ★이미 설치된 버전의 잔여물만 지운다 — 아직 설치 안 된 대기분(현재보다 높은 버전)은 건드리지 않는다.
+function cleanupUpdaterCache() {
+  try {
+    const base = process.env.LOCALAPPDATA;
+    if (!base) return;
+    const dir = path.join(base, 'auxo-updater');
+    const info = path.join(dir, 'pending', 'update-info.json');
+    if (!fs.existsSync(info)) return;
+
+    const name = (JSON.parse(fs.readFileSync(info, 'utf8')) || {}).fileName || '';
+    const m = /(\d+)\.(\d+)\.(\d+)/.exec(name);
+    if (!m) return;
+    const 받아둔 = [+m[1], +m[2], +m[3]];
+    const 지금 = String(APP_VERSION).split('.').map(Number);
+    for (let i = 0; i < 3; i++) {
+      if ((받아둔[i] || 0) > (지금[i] || 0)) return;   // 아직 설치 안 된 새 버전 — 그대로 둔다
+      if ((받아둔[i] || 0) < (지금[i] || 0)) break;    // 옛 버전 잔여물 — 지운다
+    }
+    fs.rmSync(path.join(dir, 'pending'), { recursive: true, force: true });
+    try { fs.rmSync(path.join(dir, 'installer.exe'), { force: true }); } catch (_) {}
+    logError('updater', { message: `설치 끝난 잔여물 정리 (${name})` });
+  } catch (e) { logError('updater:cleanup', e); }
+}
+
+// ── 자동 업데이트 ────────────────────────────────────────────────────
+// 사용자가 홈페이지에서 직접 받아 다시 설치하게 하지 않는다.
+//   앱이 조용히 받아 두고, **앱을 끌 때 설치**한다 → 다음에 켜면 새 버전. 사용자가 할 일은 없다.
+//
+// ★대화·기억은 userData 에 있고 프로그램 폴더와 분리돼 있어 업데이트로 사라지지 않는다.
+// ★"공지 받지 않기"를 켠 사용자는 업데이트 확인도 하지 않는다 — 네트워크를 안 쓰겠다는 뜻이므로.
+function setupAutoUpdate() {
+  if (!app.isPackaged) return;                    // 개발 실행에선 돌리지 않는다(설치본이 아니라 갱신 대상이 없다)
+  if (notice.isOff(noticeDir() || '')) return;
+  let autoUpdater;
+  try { ({ autoUpdater } = require('electron-updater')); } catch (e) { logError('updater:load', e); return; }
+
+  autoUpdater.autoDownload = true;                // 발견하면 바로 받아 둔다(사용자에게 묻지 않음)
+  autoUpdater.autoInstallOnAppQuit = true;        // 끌 때 설치 — 쓰는 도중에 끊지 않는다
+  autoUpdater.logger = null;
+
+  const say = (m) => { try { logError('updater', { message: m }); } catch (_) {} };
+  const send = (ev, data) => {
+    try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(ev, data); } catch (_) {}
+  };
+
+  autoUpdater.on('checking-for-update', () => say('확인 중'));
+  autoUpdater.on('update-available', (i) => say(`새 버전 ${i && i.version} 발견 — 받기 시작`));
+  autoUpdater.on('update-not-available', () => say('최신 상태'));
+  autoUpdater.on('download-progress', (p) => say(`받는 중 ${Math.round((p && p.percent) || 0)}%`));
+  autoUpdater.on('update-downloaded', (i) => {
+    say(`받기 완료 ${i && i.version} — 앱을 끄면 설치된다`);
+    send('update:ready', { version: i && i.version });
+  });
+  autoUpdater.on('error', (e) => say('실패: ' + ((e && e.message) || e)));
+
+  autoUpdater.checkForUpdates().catch((e) => say('확인 실패: ' + ((e && e.message) || e)));
 }
 let smokeAgentId = null;      // smoke 모드에서 세팅됨
 let smokeScreenTarget = null; // 'onboarding' | 'chat' | 'settings' | 'abilities' | 'notifications'
@@ -170,7 +245,18 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') { try { app.setAppUserModelId('com.auxo.app'); } catch (_) {} }
   const userData = app.getPath('userData');
   // smoke 캡처는 별도 데이터 경로로 격리 — 실데이터(에이전트/대화) 오염 방지.
-  storage.init(isSmokeMode ? path.join(userData, 'smoke-data') : userData);
+  // ★기억 데이터가 이 앱보다 새 버전이면 storage 가 열지 않고 던진다.
+  //   그냥 두면 창도 안 뜨고 조용히 죽는다 — 사용자는 무슨 일인지 알 수 없다. 그래서 여기서 받아 알린다.
+  try {
+    storage.init(isSmokeMode ? path.join(userData, 'smoke-data') : userData);
+  } catch (e) {
+    const known = e && (e.code === 'DB_TOO_NEW' || e.code === 'DB_BACKUP_FAILED');
+    dialog.showErrorBox('Auxo 를 시작할 수 없습니다',
+      known ? e.message
+            : `기억 데이터를 여는 중 문제가 생겼습니다.\n\n${e && e.message ? e.message : e}`);
+    app.quit();
+    return;
+  }
   // 쓰기 데이터는 userData로(설치본에서 앱폴더는 읽기전용). 기존/번들은 1회 시드.
   try {
     // 스킬은 에이전트별 격리(skills/<agentId>/). 신규 에이전트는 빈손 — 번들 자동시드 없음.
@@ -190,7 +276,17 @@ app.whenReady().then(async () => {
   }, 1500);
 
   if (isSmokeMode) {
-    await runSmokeScreenshot();
+    // ★화면 촬영기는 smoke-capture.js 로 분리돼 있다 — 개발 전용이라 **사용자에게 나가면 안 된다.**
+    //   `smoke*.js` 는 build.files 와 .gitattributes 에서 제외되므로 배포본·공개본에 안 들어간다.
+    //   따라서 여기 require 는 **--smoke 로 띄웠을 때만** 실행돼야 한다(사용자 경로에선 파일 자체가 없다).
+    //   ★try 로 감싼다 — 설치본엔 이 파일이 **없는 게 정상**이라, 혹시 --smoke 로 띄워도 앱이 죽으면 안 된다.
+    let smoke = null;
+    try { smoke = require('./smoke-capture'); } catch (_) {}
+    if (!smoke) { console.error('[smoke] 촬영기는 개발 전용입니다(설치본에는 없음).'); app.quit(); return; }
+    await smoke({
+      app, BrowserWindow, ipcMain, storage,
+      상태설정: (id, target) => { smokeAgentId = id; smokeScreenTarget = target; },
+    }).runSmokeScreenshot();
     return;
   }
 
@@ -198,6 +294,9 @@ app.whenReady().then(async () => {
 
   // 창이 뜬 뒤 비차단으로 공지 확인(안테나)
   setTimeout(() => { checkNotice(); }, 3000);
+  // 자동 업데이트도 창이 뜬 뒤에 — 시동을 늦추지 않는다
+  //   정리를 먼저 한다: 새로 받기 전에 지난 잔여물을 비운다.
+  if (!isSmokeMode) setTimeout(() => { cleanupUpdaterCache(); setupAutoUpdate(); }, 5000);
 
   // 저장된 텔레그램 연결 자동 복원(smoke 제외)
   if (!isSmokeMode) restoreTelegram();
@@ -218,331 +317,6 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => { try { require('./mcp-gateway').shutdown(); } catch (_) {} });
 
 // ── Smoke 스크린샷 모드 ─────────────────────────────────────────
-async function runSmokeScreenshot() {
-  const evidenceDir = path.join(__dirname, 'evidence');
-  if (!fs.existsSync(evidenceDir)) fs.mkdirSync(evidenceDir);
-
-  // 시드 데이터 삽입
-  const agentId = 'smoke-agent-001';
-  smokeAgentId = agentId;
-  // smoke: 더미 avatar(빨강 단색 1px PNG) 주입 → avatar 렌더링 경로 검증(눈에 띄는 색)
-  const SMOKE_DUMMY_AVATAR = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-  const seedAgent = {
-    id: agentId,
-    name: '여행친구',
-    persona: '여행을 좋아하는 활발한 친구. 항상 새로운 여행지를 추천해줌.',
-    brainMode: 'gemini-api', // smoke: 렌더링 검증용(대화는 미리 심음 — 두뇌 호출 안 함). 키 없음.
-    speech: 'casual',
-    userNickname: '형',
-    avatar: SMOKE_DUMMY_AVATAR,    // smoke: avatar 렌더링 증거용 더미
-    humanFacts: [
-      { label: '이름', value: '가라세개' },
-      { label: '좋아하는 것', value: '여행' },
-    ],
-    // L1: smoke용 work 시드 (UI 검증)
-    work: {
-      activeId: 'proj-smoke-001',
-      projects: [
-        {
-          id: 'proj-smoke-001', type: 'project', title: '6월 여행 기획',
-          goal: '제주도 3박4일 일정 완성', status: 'active',
-          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-          steps: [], artifacts: [], log: [], contextDigest: '',
-        },
-      ],
-      routines: [
-        {
-          id: 'rt-smoke-001', type: 'routine', title: '매일 여행 일기',
-          procedure: '', rhythm: '매일 저녁', recent: [], rollup: '',
-          runCount: 2, createdAt: new Date().toISOString(),
-        },
-      ],
-    },
-    createdAt: new Date().toISOString(),
-  };
-  storage.saveAgent(seedAgent);
-
-  const seedMessages = [
-    { role: 'user', content: '내 이름은 가라세개야', ts: Date.now() - 3000 },
-    { role: 'agent', content: '가라세개라고 기억할게! 반가워, 형!', ts: Date.now() - 2500 },
-    { role: 'user', content: '나는 여행을 좋아해', ts: Date.now() - 2000 },
-    { role: 'agent', content: '여행 얘기 항상 설레! 저도 그 얘기 듣고 싶었어!', ts: Date.now() - 1500 },
-    { role: 'user', content: '오늘 뭐할까?', ts: Date.now() - 1000 },
-    { role: 'agent', content: '오늘 새 여행지 검색해보는 건 어때? 저번에 여행 좋아한다고 했잖아, 형!', ts: Date.now() - 500 },
-    // smoke: 실패 마커(error:true) 렌더링 검증 — 답 못 준 턴이 눅은 톤으로 보이는지
-    { role: 'user', content: '이 질문은 실패했었어', ts: Date.now() - 300 },
-    { role: 'agent', content: '지금 바로 답을 드리지 못했어요. 잠시 후 다시 말 걸어주시면 이어서 답할게요. (일시적 오류)', ts: Date.now() - 250, error: true },
-  ];
-  storage.saveConversation(agentId, seedMessages);
-  // smoke: 압축으로 접힌 옛 대화(아카이브) 시드 → 대화 상단 "이전 대화 더 보기" 배너 렌더링 검증
-  storage.appendArchivedMessages(agentId, [
-    { role: 'user', content: '(옛 대화) 처음 만났을 때 얘기', ts: Date.now() - 100000 },
-    { role: 'agent', content: '(옛 대화) 그때 반가웠어 형!', ts: Date.now() - 99000 },
-  ]);
-
-  // ── 스크린샷 1: 온보딩 화면 (상단) ──────────────────────────
-  await captureScreen({
-    evidenceDir,
-    agentId: null,       // null → 온보딩 화면 표시
-    smokeTarget: 'onboarding',
-    outFile: 'screenshot-onboarding.png',
-    waitMs: 1200,
-  });
-
-  // ── 스크린샷 1b: 온보딩 화면 (하단 — 에이전트 불러오기 버튼 확인) ──
-  await captureScreen({
-    evidenceDir,
-    agentId: null,
-    smokeTarget: 'onboarding',
-    outFile: 'screenshot-onboarding-import-btn.png',
-    waitMs: 1200,
-    scrollToBottom: true,
-  });
-
-  // ── 온보딩 wizard 단계 캡처 (②구독·②API·③이름) ──
-  await captureScreen({
-    evidenceDir, agentId: null, smokeTarget: 'onboarding',
-    outFile: 'wiz2-sub.png', waitMs: 800, tall: true,
-    wizExec: "var c=document.querySelector('.brain-card[data-value=\"codex-subscription\"]'); if(c)c.click(); goWizStep(2);",
-  });
-  await captureScreen({
-    evidenceDir, agentId: null, smokeTarget: 'onboarding',
-    outFile: 'wiz2-api.png', waitMs: 800, tall: true,
-    wizExec: "var c=document.querySelector('.brain-card[data-value=\"gemini-api\"]'); if(c)c.click(); goWizStep(2);",
-  });
-  await captureScreen({
-    evidenceDir, agentId: null, smokeTarget: 'onboarding',
-    outFile: 'wiz3-name.png', waitMs: 800,
-    wizExec: "goWizStep(3);",
-  });
-
-  // ── 스크린샷 1c: 대화 화면 (시안 디자인 확인용) ──────────────
-  await captureScreen({
-    evidenceDir,
-    agentId,             // 에이전트 있음 → 대화 화면
-    smokeTarget: 'chat',
-    outFile: 'screenshot-chat.png',
-    waitMs: 1500,
-  });
-
-  // ── 스크린샷 avatar: 더미 avatar가 적용된 대화 화면 (사이드바+헤더+메시지 아바타) ──
-  await captureScreen({
-    evidenceDir,
-    agentId,
-    smokeTarget: 'chat',
-    outFile: 'screenshot-avatar.png',
-    waitMs: 1800,
-  });
-
-  // ── 스크린샷 chat-archive: 대화 상단으로 스크롤 → "이전 대화 더 보기" 배너 렌더 검증 ──
-  await captureScreen({
-    evidenceDir,
-    agentId,
-    smokeTarget: 'chat',
-    outFile: 'screenshot-chat-archive.png',
-    waitMs: 1500,
-    wizExec: "setTimeout(function(){ var m=document.getElementById('chat-messages'); if(m) m.scrollTop=0; }, 400);",
-  });
-
-  // ── 스크린샷 chat-archive-open: 위로 스크롤 → 접혔던 옛 대화가 위에 자동으로 되살아나는지 검증 ──
-  await captureScreen({
-    evidenceDir,
-    agentId,
-    smokeTarget: 'chat',
-    outFile: 'screenshot-chat-archive-open.png',
-    waitMs: 1800,
-    // 위로 스크롤 → 자동 로드 → 로드 후 스크롤 위치 보정으로 새 옛대화가 화면 위로 밀리므로,
-    // 다시 상단으로 올려 되살아난 옛 대화가 실제로 보이는지 캡처(기능 증명).
-    wizExec: "setTimeout(function(){ var m=document.getElementById('chat-messages'); if(!m) return; m.scrollTop=0; m.dispatchEvent(new Event('scroll')); setTimeout(function(){ m.scrollTop=0; }, 600); }, 400);",
-  });
-
-  // ── 스크린샷 chat-stop: 생성 중 전송 버튼(↑)→정지(■) 렌더 검증 (큐잉 pill은 기능 제거로 삭제) ──
-  await captureScreen({
-    evidenceDir, agentId, smokeTarget: 'chat',
-    outFile: 'screenshot-chat-stop.png', waitMs: 1200,
-    wizExec: "setTimeout(function(){ try{ setGenerating(true, 'smoke-agent-001'); }catch(e){} }, 300);",
-  });
-
-  // ── 스크린샷 chat-dragover: 파일 드래그 중 입력영역 하이라이트 렌더 검증 ──
-  await captureScreen({
-    evidenceDir, agentId, smokeTarget: 'chat',
-    outFile: 'screenshot-chat-dragover.png', waitMs: 1000,
-    wizExec: "setTimeout(function(){ try{ var s=document.getElementById('screen-chat'); if(s)s.classList.add('drag-over'); }catch(e){} }, 300);",
-  });
-
-  // ── 스크린샷 alive: "살아있음 표시"(생각 중 N초 + 작업 중 N초 경과) 렌더 검증 ──
-  await captureScreen({
-    evidenceDir,
-    agentId,
-    smokeTarget: 'chat',
-    outFile: 'screenshot-alive.png',
-    waitMs: 1500,
-    wizExec: "setTimeout(function(){ try{ showTyping(); var t=document.querySelector('#typing-indicator .thinking-text'); if(t)t.textContent='에이전트가 생각 중… 14초'; var bodies=document.querySelectorAll('.message.agent .msg-body'); var b=bodies[bodies.length-1]; if(b){ var w=document.createElement('div'); w.className='work-pulse'; w.textContent='작업 중… 23초 경과'; b.appendChild(w);} var m=document.getElementById('chat-messages'); if(m)m.scrollTop=m.scrollHeight; }catch(e){} }, 400);",
-  });
-
-  // ── 스크린샷 2: 에이전트 설정 화면 (프로필 사진 UI 포함) ──────────
-  await captureScreen({
-    evidenceDir,
-    agentId,             // 에이전트 있음 → 대화 화면 로드 후 에이전트설정 화면으로 전환
-    smokeTarget: 'settings',
-    outFile: 'screenshot-settings.png',
-    waitMs: 1200,
-  });
-
-  // ── 스크린샷 settings-avatar: 설정 화면 하단(프로필 사진 섹션 보이게) ──
-  await captureScreen({
-    evidenceDir,
-    agentId,
-    smokeTarget: 'settings',
-    outFile: 'screenshot-settings-avatar.png',
-    waitMs: 1200,
-    scrollSettingsToAvatar: true,
-  });
-
-  // ── 스크린샷 settings-export: 설정 화면 내보내기 섹션 ──
-  await captureScreen({
-    evidenceDir,
-    agentId,
-    smokeTarget: 'settings',
-    outFile: 'screenshot-settings-export.png',
-    waitMs: 1200,
-    scrollSettingsToExport: true,
-  });
-
-  // ── 스크린샷 settings-telegram: 설정 화면 텔레그램 연결 섹션 ──
-  await captureScreen({
-    evidenceDir, agentId, smokeTarget: 'settings',
-    outFile: 'settings-telegram.png', waitMs: 1000, tall: true,
-    wizExec: "document.querySelectorAll('#screen-settings .settings-section-title').forEach(function(h){ if(h.textContent.indexOf('텔레그램')>=0) h.scrollIntoView({block:'center'}); });",
-  });
-
-  // ── 스크린샷 settings-discord: 디스코드 연결 섹션(개발자 포털 링크 확인) ──
-  await captureScreen({
-    evidenceDir, agentId, smokeTarget: 'settings',
-    outFile: 'settings-discord.png', waitMs: 1200, tall: true,
-    wizExec: "var b=document.querySelector('#screen-settings .stab[data-tab=\"connect\"]'); if(b)b.click(); setTimeout(function(){ document.querySelectorAll('#screen-settings .settings-section-title').forEach(function(h){ if(h.textContent.indexOf('디스코드')>=0) h.scrollIntoView({block:'center'}); }); }, 250);",
-  });
-
-  // ── 스크린샷 3: 능력 화면 — 3탭(기본 능력 / 스킬 / MCP) 각각 ────
-  await captureScreen({
-    evidenceDir,
-    agentId,             // 에이전트 있음 → 대화 화면 로드 후 능력 화면으로 전환
-    smokeTarget: 'abilities',
-    outFile: 'screenshot-abilities.png',
-    waitMs: 1200,
-    tall: true,
-  });
-  for (const tab of ['skills', 'mcp']) {
-    await captureScreen({
-      evidenceDir, agentId, smokeTarget: 'abilities',
-      outFile: `abilities-${tab}.png`, waitMs: 1500, tall: true,
-      wizExec: `var b=document.querySelector('#screen-abilities .stab[data-tab="${tab}"]'); if(b)b.click();`,
-    });
-  }
-
-  // ── 스크린샷 4: 알림 화면 ────────────────────────────────────
-  await captureScreen({
-    evidenceDir,
-    agentId,             // 에이전트 있음 → 대화 화면 로드 후 알림 화면으로 전환
-    smokeTarget: 'notifications',
-    outFile: 'screenshot-notifications.png',
-    waitMs: 1200,
-  });
-
-  app.quit();
-}
-
-/**
- * 특정 화면을 캡처해 PNG로 저장한다.
- * @param {Object} opts
- *   evidenceDir  저장 폴더
- *   agentId      null이면 온보딩, 값이 있으면 해당 에이전트 화면
- *   smokeTarget  'onboarding' | 'settings' — 렌더러에 전달해 어느 화면으로 갈지 지시
- *   outFile      저장 파일명
- *   waitMs       캡처 전 대기 ms
- */
-async function captureScreen({ evidenceDir, agentId, smokeTarget, outFile, waitMs, scrollToBottom = false, scrollSettingsToAvatar = false, scrollSettingsToExport = false, tall = false, wizExec = null }) {
-  return new Promise(async (resolve) => {
-    const win = new BrowserWindow({
-      width: 1100,
-      height: (scrollSettingsToExport || tall) ? 2000 : 750,
-      show: false,
-      backgroundColor: '#0f0f1a',
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-
-    // smoke:get-agent-id IPC는 전역 핸들러에 등록됨
-    // 임시로 agentId를 재세팅
-    smokeAgentId = agentId;
-    // smokeTarget을 렌더러가 조회할 수 있도록
-    smokeScreenTarget = smokeTarget;
-
-    win.loadFile('renderer/index.html');
-
-    let done = false;
-    const finish = async () => {
-      if (done) return;
-      done = true;
-      // 이 핸들러 제거
-      ipcMain.removeListener('smoke:ready', onReady);
-      await new Promise(r => setTimeout(r, waitMs));
-      try {
-        // scrollToBottom: 온보딩 하단(불러오기 버튼)을 보여주기 위해 스크롤
-        if (scrollToBottom) {
-          await win.webContents.executeJavaScript(
-            'document.querySelector(".onboard-wrap") && (document.querySelector(".onboard-wrap").scrollTop = 9999);'
-          );
-          await new Promise(r => setTimeout(r, 300));
-        }
-        // scrollSettingsToAvatar: 설정 화면에서 프로필 사진 섹션이 보이게 스크롤
-        if (scrollSettingsToAvatar) {
-          await win.webContents.executeJavaScript(
-            '(function(){ var el=document.getElementById("section-avatar"); if(el) el.scrollIntoView({behavior:"instant",block:"center"}); })()'
-          );
-          await new Promise(r => setTimeout(r, 400));
-        }
-        // scrollSettingsToExport: 설정 화면 스크롤 컨테이너(.settings-body)를 맨 아래로 → 내보내기 섹션 노출
-        if (scrollSettingsToExport) {
-          await win.webContents.executeJavaScript(
-            '(function(){ var b=document.querySelector("#screen-settings .settings-body"); if(b){ b.scrollTop = b.scrollHeight; } })()'
-          );
-          await new Promise(r => setTimeout(r, 400));
-        }
-        // wizExec: 온보딩 wizard 상태를 직접 조작(단계/모드 캡처용). 실행 후 게이트/렌더 대기.
-        if (wizExec) {
-          try { await win.webContents.executeJavaScript(`(function(){ try { ${wizExec} } catch(e){ console.error(e); } })()`); }
-          catch (_) {}
-          await new Promise(r => setTimeout(r, 1500));
-        }
-        // wizExec 등으로 DOM을 바꾼 뒤엔 capturePage가 예전 합성 프레임을 담을 수 있다.
-        // 리페인트를 강제하고 두 프레임 기다린 뒤에 찍는다.
-        await win.webContents.executeJavaScript(`(function(){
-          document.body.style.opacity = '0.999';
-          void document.body.offsetHeight;
-          document.body.style.opacity = '';
-          return new Promise(function(r){ requestAnimationFrame(function(){ requestAnimationFrame(function(){ r(1); }); }); });
-        })()`);
-        const image = await win.webContents.capturePage();
-        const pngPath = path.join(evidenceDir, outFile);
-        fs.writeFileSync(pngPath, image.toPNG());
-        console.log(`[SMOKE-SCREENSHOT] saved: ${pngPath} (${image.getSize().width}x${image.getSize().height})`);
-      } catch (e) {
-        console.error('[SMOKE-SCREENSHOT] capturePage failed:', e.message);
-      }
-      try { win.destroy(); } catch(_) {}
-      resolve();
-    };
-
-    // smoke:ready 신호 또는 4초 타임아웃 중 먼저 오는 쪽으로 캡처
-    const onReady = () => finish();
-    ipcMain.on('smoke:ready', onReady);
-    setTimeout(finish, 4000);
-  });
-}
 
 // ── IPC 핸들러 ────────────────────────────────────────────────────
 
@@ -570,7 +344,8 @@ ipcMain.handle('agent:save', async (e, agentData) => {
     auxoMd: agentData.auxoMd || '',                // 사용자 자유 지침(auxo.md), 1층 아래 종속
     disabledSkills: agentData.disabledSkills || [], // 이 에이전트에서 끈 스킬 id (기본=전부 사용)
     disabledMcp: agentData.disabledMcp || [],       // 이 에이전트에서 끈 MCP 서버 id (기본=전부 사용)
-    humanFacts: [],
+    userMemory: '',   // 이 사람에 대한 기억(통짜 글). [[user-memory]] 가 관리
+    refMemory: '',    // 첨부·문서에서 온 정보(본인 사실과 분리)
     createdAt: new Date().toISOString(),
   };
   storage.saveAgent(agent);
@@ -606,29 +381,10 @@ ipcMain.handle('agent:update', async (e, { agentId, updates }) => {
   return agent;
 });
 
-// 기억 삭제
-ipcMain.handle('fact:delete', async (e, { agentId, factIndex }) => {
-  const agent = storage.loadAgent(agentId);
-  if (!agent) return { error: '에이전트 없음' };
-  const facts = agent.humanFacts || [];
-  if (factIndex < 0 || factIndex >= facts.length) return { error: '인덱스 범위 초과' };
-  facts.splice(factIndex, 1);
-  agent.humanFacts = facts;
-  storage.saveAgent(agent);
-  return { humanFacts: facts };
-});
-
-// 기억 수정
-ipcMain.handle('fact:update', async (e, { agentId, factIndex, label, value }) => {
-  const agent = storage.loadAgent(agentId);
-  if (!agent) return { error: '에이전트 없음' };
-  const facts = agent.humanFacts || [];
-  if (factIndex < 0 || factIndex >= facts.length) return { error: '인덱스 범위 초과' };
-  facts[factIndex] = { label, value };
-  agent.humanFacts = facts;
-  storage.saveAgent(agent);
-  return { humanFacts: facts };
-});
+// 기억 삭제/수정 IPC(fact:delete·fact:update)는 두지 않는다.
+//   기억 관리 화면이 없는데 핸들러와 렌더러 함수만 남으면
+//   "화면에 기억 목록이 있다"고 잘못 읽게 된다.
+//   기억을 고치는 길은 대화(remember/forget) 하나다.
 
 // 에이전트 목록
 ipcMain.handle('agent:list', async () => {
@@ -652,13 +408,15 @@ ipcMain.handle('skills:remove', async (e, { agentId, id }) => skillsRegistry.rem
 
 // ── MCP 서버 ──────────────────────────────────────────────────────
 ipcMain.handle('mcp:list', async (e, agentId) => mcpManager.listServers(agentId));
-ipcMain.handle('mcp:add', async (e, { agentId, data }) => mcpManager.addServer(agentId, data || {}));
+// 'mcp:add'(임의 명령 직접 등록)·'mcp:addFromJson'은 두지 않는다: 신뢰검사 우회 통로가 된다.
+// MCP 등록은 addFromCatalog(신뢰 카탈로그) + 에이전트 find_mcp/install_mcp(신뢰 스코프)로만.
 ipcMain.handle('mcp:remove', async (e, { agentId, id }) => mcpManager.removeServer(agentId, id));
 ipcMain.handle('mcp:setEnabled', async (e, { agentId, id, enabled }) => mcpManager.setEnabled(agentId, id, enabled));
 ipcMain.handle('mcp:setAutoApprove', async (e, { agentId, id, val }) => mcpManager.setAutoApprove(agentId, id, val));
-ipcMain.handle('mcp:catalog', async () => (mcpManager.loadCatalog().servers || []));
+// 능력 메뉴 "빠른 추가"엔 추가만으로 바로 되는 것만 노출(menu:false 는 숨김).
+// 숨긴 것(예: Google — 키 입력·비공식)은 사용자가 대화로 요청하면 에이전트가 find_mcp 로 찾아 안내·설치.
+ipcMain.handle('mcp:catalog', async () => (mcpManager.loadCatalog().servers || []).filter(s => s.menu !== false));
 ipcMain.handle('mcp:addFromCatalog', async (e, { agentId, id, params }) => mcpManager.addFromCatalog(agentId, id, params || {}));
-ipcMain.handle('mcp:addFromJson', async (e, { agentId, text }) => mcpManager.addFromJson(agentId, text));
 
 // ── 구독 CLI 두뇌 설치/로그인 (온보딩 wizard ②-A) ──────────────────────
 // 사용자가 구독 모델(claude/codex)을 고르면, 해당 CLI가 이 PC에 설치+로그인 됐는지 확인.
@@ -674,15 +432,6 @@ const CLI_GUIDES = {
     installCmd: 'npm install -g @openai/codex',
     loginCmd: 'codex login', docUrl: 'https://developers.openai.com/codex/cli/',
   },
-  'antigravity-subscription': {
-    // Antigravity 는 npm 이 아니라 공식 설치 스크립트로 설치되고, 로그인은 별도 CLI 명령이 없다
-    // (앱/CLI 첫 실행 시 브라우저 OAuth·OS 키링 자동). → installType='script', loginCmd=null.
-    name: 'Antigravity (Google 구독 — Gemini·Claude·GPT)', installType: 'script',
-    installCmd: process.platform === 'win32'
-      ? 'powershell -NoProfile -Command "irm https://antigravity.google/cli/install.ps1 | iex"'
-      : 'curl -fsSL https://antigravity.google/cli/install.sh | bash', // macOS/Linux 공식 설치 스크립트
-    loginCmd: null, docUrl: 'https://antigravity.google/docs/cli/install',
-  },
 };
 ipcMain.handle('cli:check', async (e, brainMode) => {
   const g = CLI_GUIDES[brainMode];
@@ -697,9 +446,6 @@ ipcMain.handle('cli:check', async (e, brainMode) => {
     } else if (brainMode === 'codex-subscription') {
       installed = brainCodex.isAvailable();
       if (installed) loggedIn = !!brainCodex.loginStatus().loggedIn;
-    } else if (brainMode === 'antigravity-subscription') {
-      installed = brainAntigravity.isAvailable();
-      if (installed) loggedIn = !!brainAntigravity.loginStatus().loggedIn;
     }
   } catch (_) {}
   // node/npm 존재(설치 버튼 동작 가능 여부) — 없으면 폴백 안내 필요
@@ -717,16 +463,9 @@ ipcMain.handle('cli:install', async (e, brainMode) => {
   return await new Promise((resolve) => {
     let proc;
     try {
-      if (g.installType === 'script') {
-        // Antigravity: 공식 설치 스크립트(npm 불필요) — OS 별 분기(Windows=PowerShell, macOS/Linux=curl|bash).
-        proc = process.platform === 'win32'
-          ? spawn('powershell', ['-NoProfile', '-Command', 'irm https://antigravity.google/cli/install.ps1 | iex'], { shell: true, windowsHide: true })
-          : spawn('bash', ['-c', 'curl -fsSL https://antigravity.google/cli/install.sh | bash'], { windowsHide: true });
-      } else {
-        proc = spawn('npm', ['install', '-g', g.pkg], { shell: true, windowsHide: true });
-      }
+      proc = spawn('npm', ['install', '-g', g.pkg], { shell: true, windowsHide: true });
     }
-    catch (err) { return resolve({ ok: false, error: err.message, needNode: g.installType !== 'script' }); }
+    catch (err) { return resolve({ ok: false, error: err.message }); }
     let log = '';
     const push = (t) => { log += t; try { e.sender.send('cli:install-progress', { brainMode, text: String(t) }); } catch (_) {} };
     proc.stdout.on('data', d => push(d));
@@ -778,6 +517,34 @@ ipcMain.handle('api:test', async (e, { brainMode, apiKey, model, baseURL }) => {
     return { ok: true, sample: String(txt || '').trim().slice(0, 60) };
   } catch (err) {
     return { ok: false, error: (err && err.message) || '연결 실패' };
+  }
+});
+
+/**
+ * 이 키로 쓸 수 있는 모델 목록. 기본 모델을 두지 않기 때문에 필요한 통로다.
+ *
+ * 왜 필요한가: 우리가 정한 기본 모델 하나에 전부 걸어두면, 제공사가 그 모델을 내리는 순간
+ *   **두뇌 전체가 죽는다.** 기본값을 바꿔봐야 그것도 언젠가 죽는다. 그래서 기본을 두지 않고
+ *   **회사에 직접 물어본 목록에서 사용자가 고르게** 한다. 우리는 목록을 하나도 안 들고 있으므로
+ *   회사가 모델을 바꿔도 우리가 할 일이 없다.
+ *
+ * ★키 검증을 겸한다 — 목록 조회가 성공했다는 건 키가 유효하다는 뜻이다.
+ *   그래서 온보딩에서 "연결 테스트"와 "모델 불러오기"를 한 번에 끝내 단계가 안 늘어난다.
+ */
+ipcMain.handle('api:models', async (e, { brainMode, apiKey }) => {
+  try {
+    const 두뇌 = {
+      'openai-api': () => require('./brain-openai'),
+      'gemini-api': () => require('./brain-gemini'),
+      'claude-api': () => require('./brain-anthropic'),
+    }[brainMode];
+    // openai-compatible 은 제공자가 제각각이라 목록 규격을 보장할 수 없다 → 직접 입력을 유지한다.
+    if (!두뇌) return { ok: false, error: '이 연결 방식은 모델 목록을 불러올 수 없어요. 모델명을 직접 입력해 주세요.' };
+    const models = await 두뇌().listModels(apiKey);
+    if (!models.length) return { ok: false, error: '쓸 수 있는 모델이 없어요. 키와 결제(크레딧) 상태를 확인해 주세요.' };
+    return { ok: true, models };
+  } catch (err) {
+    return { ok: false, error: (err && err.message) || '모델 목록을 못 불러왔어요.' };
   }
 });
 
@@ -861,7 +628,7 @@ function startAppScheduler() {
     loadAgent: storage.loadAgent,
     loadAllAgents: storage.loadAllAgents,
     saveAgent: storage.saveAgent,
-    runTurn: (id, prompt) => engine.runTurn({ agentId: id, userMessage: prompt, emit: () => {} }),
+    runTurn: (id, prompt, 표시) => engine.runTurn({ agentId: id, userMessage: prompt, displayUserMessage: 표시, emit: () => {} }),
     deliver: async (ch, text, s) => {
       const isHb = s && s.kind === 'heartbeat'; // 하트비트(먼저 안부)는 '예약' 라벨 없이 자연스럽게
       const body = String(text);
@@ -869,7 +636,7 @@ function startAppScheduler() {
       if (ch === 'discord') { await botDiscord.sendToOwner(isHb ? body : `🔔 ${s.title}\n${body}`).catch(() => {}); return; }
       try {
         if (Notification.isSupported()) {
-          const n = new Notification(isHb ? { body: body.slice(0, 240), silent: false, timeoutType: 'default' } : { title: `🔔 ${s.title}`, body: body.slice(0, 240), silent: false, timeoutType: 'default' });
+          const n = new Notification(isHb ? { body: body.slice(0, 240), silent: false, timeoutType: 'default', icon: notiIcon() } : { title: `🔔 ${s.title}`, body: body.slice(0, 240), silent: false, timeoutType: 'default', icon: notiIcon() });
           // 토스트 클릭 → 앱 띄우고 포커스(내용은 채팅창에 이미 남김)
           n.on('click', () => { try { if (mainWindow && !mainWindow.isDestroyed()) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } } catch (_) {} });
           n.show();
@@ -948,34 +715,10 @@ const MULTIMODAL_PROVIDERS = new Set(['gemini-api', 'claude-api', 'openai-api', 
  * 모든 LLM 두뇌는 (systemPrompt, userPrompt, opts) -> Promise<text> 시그니처로 통일.
  * 알 수 없는/미설정 두뇌는 null 반환(호출부가 "모델 연결" 안내).
  */
-function pickGenerate(agent) {
-  // 키 보관함 우선(제공자별), 없으면 단일 미러 폴백(하위호환)
-  const key = (agent.apiKeys && agent.apiKeys[agent.brainMode]) || agent.apiKey;
-  const mdl = (agent.models && agent.models[agent.brainMode]) || agent.model;
-  switch (agent.brainMode) {
-    case 'gemini-api':
-      return (sys, usr, opts = {}) =>
-        brainGemini.geminiGenerate(sys, usr, { ...opts, apiKey: key, model: mdl });
-    case 'claude-subscription':
-      return (sys, usr, opts = {}) => brainClaude.claudeGenerate(sys, usr, opts);
-    case 'codex-subscription':
-      return (sys, usr, opts = {}) => brainCodex.codexGenerate(sys, usr, opts);
-    case 'antigravity-subscription':
-      return (sys, usr, opts = {}) => brainAntigravity.antigravityGenerate(sys, usr, { ...opts, model: mdl });
-    case 'claude-api':
-      return (sys, usr, opts = {}) =>
-        brainAnthropic.anthropicGenerate(sys, usr, { ...opts, apiKey: key, model: mdl });
-    case 'openai-api':
-      return (sys, usr, opts = {}) =>
-        brainOpenai.openaiGenerate(sys, usr, { ...opts, apiKey: key, model: mdl });
-    case 'openai-compatible':
-      // OpenAI 호환 범용 커넥터(OpenRouter·xAI Grok·DeepSeek·Mistral·Groq 등). baseURL로 제공자 지정.
-      return (sys, usr, opts = {}) =>
-        brainOpenai.openaiGenerate(sys, usr, { ...opts, apiKey: key, model: mdl, baseURL: agent.baseURL });
-    default:
-      return null; // 미설정/알 수 없는 두뇌
-  }
-}
+// ★사본을 두지 않는다 — engine.pickGenerate 한 곳을 쓴다.
+//   두 벌이면 새 두뇌를 추가할 때 한쪽만 갱신돼 갈라진다.
+//   여기(main)는 설정 화면의 "연결 테스트"에만 쓰이고, 대화는 engine.runTurn 이 처리한다.
+const pickGenerate = engine.pickGenerate;
 
 // 메시지 전송 (LLM 두뇌: claude 구독 / gemini api / …)
 // 같은 에이전트의 대화는 한 번에 하나씩 처리한다.
@@ -992,7 +735,7 @@ ipcMain.handle('chat:stop', async (e, { agentId }) => {
 });
 
 // 앱 대화 처리 — 공통 엔진(engine.runTurn/processMemory)에 위임하고 앱 고유(첨부 인테이크·스트리밍·파일카드·알림·IPC)만 얹는다.
-// (2026-07-12 엔진 통합: 회상·프롬프트·L2·도구루프·생성·정직②④·응답저장·기억후처리는 engine 담당 = CLI·텔레그램·디스코드와 동일 루프.
+// (엔진 통합: 회상·프롬프트·L2·도구루프·생성·정직②④·응답저장·기억후처리는 engine 담당 = CLI·텔레그램·디스코드와 동일 루프.
 //  직렬화는 engine.runTurn 내부 runExclusive 가 하므로 여기서 바깥 래핑하지 않는다 — 같은 agentId 중첩이면 데드락.)
 async function handleChatSend(e, { agentId, userMessage, attachments }) {
   const agent = storage.loadAgent(agentId);
@@ -1087,16 +830,14 @@ async function handleChatSend(e, { agentId, userMessage, attachments }) {
   try {
     const inactive = mainWindow && !mainWindow.isDestroyed() && (!mainWindow.isFocused() || mainWindow.isMinimized() || !mainWindow.isVisible());
     if (inactive && Notification.isSupported() && response && !(r && r.stopped)) {
-      const n = new Notification({ title: (agent && agent.name) || 'Auxo', body: String(response).slice(0, 240), silent: false, timeoutType: 'default' });
+      const n = new Notification({ title: (agent && agent.name) || 'Auxo', body: String(response).slice(0, 240), silent: false, timeoutType: 'default', icon: notiIcon() });
       n.on('click', () => { try { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.show(); mainWindow.focus(); } catch (_) {} });
       n.show();
     }
   } catch (_) {}
 
-  // 렌더러 반환(기억패널 즉시 갱신용 최신 humanFacts 포함). 응답·대화저장은 engine 이 이미 처리.
-  const fa = storage.loadAgent(agentId);
-  const outFacts = (fa && Array.isArray(fa.humanFacts)) ? fa.humanFacts : (agent.humanFacts || []);
-  return { response, humanFacts: outFacts, usedTools: (r && r.usedTools) || [], sentFiles, userFiles, stopped: !!(r && r.stopped) };
+  // 응답·대화저장은 engine 이 이미 처리. 기억 패널은 화면에 없으므로 안 돌려준다.
+  return { response, usedTools: (r && r.usedTools) || [], sentFiles, userFiles, stopped: !!(r && r.stopped) };
 }
 
 // 파일 전달: 에이전트가 보낸 파일 열기/폴더에서 보기 (send_file → sentFiles → renderer 버튼)
@@ -1138,7 +879,7 @@ ipcMain.handle('chat:load', async (e, agentId) => {
 
 // 압축으로 접힌 옛 원본 대화(아카이브) 로드 — 대화 상단 "이전 대화 더 보기"용.
 ipcMain.handle('chat:loadArchive', async (e, agentId, opts) => {
-  // ★2026-07-16: 페이징 — opts 있으면 뒤에서부터 페이지만(대화 수만 개인 사용자도 화면이 안 멈추게).
+  // ★페이징 — opts 있으면 뒤에서부터 페이지만(대화 수만 개인 사용자도 화면이 안 멈추게).
   //   opts 없이 부르던 기존 호출은 그대로 전량 반환(하위호환).
   if (opts) return storage.loadArchivedPage(agentId, opts);
   return storage.loadArchivedMessages(agentId);
@@ -1147,17 +888,16 @@ ipcMain.handle('chat:loadArchive', async (e, agentId, opts) => {
 // Export — 표준 에이전트 파일 포맷(companion-format v1.0)으로 내보내기
 // 결정 A: apiKey 절대 미포함 (companion-format.serialize 내부에서 화이트리스트 + 사후검증)
 ipcMain.handle('agent:export', async (e, payload) => {
-  // payload: 문자열(구) 또는 {agentId, includeWork}. includeWork=true면 완전 백업(작업·전체대화 포함).
+  // payload: 문자열(구) 또는 {agentId}. 범위 옵션은 두지 않는다 — 항상 전부 담는다.
   const agentId = typeof payload === 'string' ? payload : (payload && payload.agentId);
-  const includeWork = !!(payload && payload.includeWork);
   const agent = storage.loadAgent(agentId);
   if (!agent) return { error: '에이전트 없음' };
-  const messages = storage.loadArchivedMessages(agentId).concat(storage.loadConversation(agentId)); // 완전백업: 아카이브(옛 대화)+활성 전체
+  const messages = storage.loadArchivedMessages(agentId).concat(storage.loadConversation(agentId)); // 아카이브(옛 대화)+활성 전체
   const conversationSummary = storage.loadConversationSummary(agentId);
 
   let exportData;
   try {
-    exportData = companionFormat.serialize(agent, messages, conversationSummary, { includeWork });
+    exportData = companionFormat.serialize(agent, messages, conversationSummary, { includeWork: true });
   } catch (serErr) {
     console.error('[agent:export] serialize 오류:', serErr.message);
     return { error: 'export 직렬화 오류: ' + serErr.message };
@@ -1180,26 +920,66 @@ ipcMain.handle('agent:export', async (e, payload) => {
   return { savedTo: filePath };
 });
 
+// ── 문제 기록 내보내기 ─────────────────────────────────────────────────
+//   왜: 안 되는 걸 알려주려 해도 사용자는 **로그 파일이 어디 있는지 모른다.**
+//   ★자동으로 보내지 않는다. 파일로 저장만 해주고 **보낼지는 사용자가 정한다.**
+//     개인정보 방침에 *"우리가 수집하거나 보관하는 것은 없습니다"* 라고 공개 약속을 해뒀다 —
+//     자동 전송은 기능 하나가 아니라 **제품이 팔리는 이유**를 깨는 일이다.
+//   담기는 것(실측): 두뇌 종류·시도 횟수·실패 사유뿐.
+//     홈 경로·이메일·API키·토큰·에이전트id·대화 조각 **전부 0건**.
+ipcMain.handle('errorlog:save', async () => {
+  const p = errorLogPath();
+  let 내용 = '';
+  try { 내용 = fs.readFileSync(p, 'utf8'); } catch (_) { /* 파일이 없으면 = 아직 오류가 없었다 */ }
+  if (!내용.trim()) return { empty: true };
+
+  const 날짜 = new Date().toISOString().slice(0, 10);
+  const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
+    title: '문제 기록 저장',
+    defaultPath: path.join(app.getPath('desktop'), `Auxo-문제기록-${날짜}.txt`),
+    filters: [{ name: '텍스트 파일', extensions: ['txt'] }],
+  });
+  if (canceled || !filePath) return { canceled: true };
+
+  // 받는 쪽(우리)이 뭘 보는지 사용자도 알 수 있게 머리말을 붙인다.
+  const 머리말 = [
+    `Auxo 문제 기록 (${new Date().toLocaleString('ko-KR')})`,
+    `버전 ${app.getVersion()} · ${process.platform} ${require('os').release()}`,
+    '',
+    '이 파일에는 대화 내용·기억·API 키·비밀번호가 담기지 않습니다.',
+    '언제 어떤 기능이 실패했는지만 적혀 있습니다.',
+    'hello@getauxo.app 으로 보내주시면 원인을 찾는 데 큰 도움이 됩니다.',
+    '─'.repeat(60), '',
+  ].join('\n');
+  fs.writeFileSync(filePath, 머리말 + 내용, 'utf8');
+  return { savedTo: filePath, lines: 내용.split('\n').filter(Boolean).length };
+});
+
 // Export(읽기용) — 사람·다른 AI가 읽는 마크다운 폴더로 내보내기. apiKey·임베딩·내부수치 미포함.
-//   payload: {agentId, includeSensitive}. 폴더를 고르면 그 아래 "<이름>-기억/" 생성.
+//   payload: {agentId}. 민감기억 제외 옵션은 두지 않는다 — 지킬 수 없는 약속이다.
 ipcMain.handle('agent:export-markdown', async (e, payload) => {
   const agentId = typeof payload === 'string' ? payload : (payload && payload.agentId);
-  const includeSensitive = !(payload && payload.includeSensitive === false); // 기본 포함
   const agent = storage.loadAgent(agentId);
   if (!agent) return { error: '에이전트 없음' };
-  const { filePaths, canceled } = await dialog.showOpenDialog(mainWindow, {
-    title: '읽기용 폴더로 내보내기 (저장할 위치 선택)',
-    defaultPath: app.getPath('desktop'),
-    properties: ['openDirectory', 'createDirectory'],
+  // 폴더 선택(showOpenDialog)이 아니라 저장 대화상자를 쓴다 — 위치와 **폴더 이름**을 사용자가 정하게.
+  // 위치만 고르게 하고 이름을 우리가 박으면 사용자가 폴더 이름을 바꿀 수 없다.
+  const folderName = `${(agent.name || '내AI').replace(/[\\/:*?"<>|]/g, '_')}-기억`;
+  const { filePath, canceled } = await dialog.showSaveDialog(mainWindow, {
+    title: '읽기용 폴더로 내보내기',
+    message: '저장할 위치와 폴더 이름을 정해주세요. 이 이름으로 폴더가 만들어집니다.',
+    defaultPath: path.join(app.getPath('desktop'), folderName),
+    buttonLabel: '내보내기',
+    nameFieldLabel: '폴더 이름',
+    properties: ['createDirectory', 'showOverwriteConfirmation'],
   });
-  if (canceled || !filePaths || !filePaths[0]) return { canceled: true };
+  if (canceled || !filePath) return { canceled: true };
   try {
-    const r = memoryExport.exportToFolder(agentId, storage, filePaths[0], { includeSensitive });
-    console.log(`[agent:export-markdown] 저장 완료: ${r.dir} (파일 ${r.fileCount}개, 민감포함=${includeSensitive})`);
+    const r = memoryExport.exportToFolder(agentId, storage, filePath, { asFinalDir: true });
+    console.log(`[agent:export-markdown] 저장 완료: ${r.dir} (파일 ${r.fileCount}개)`);
     return { savedTo: r.dir, fileCount: r.fileCount };
   } catch (err) {
     console.error('[agent:export-markdown] 오류:', err.message);
-    return { error: '마크다운 내보내기 오류: ' + err.message };
+    return { error: '글로 저장하는 중 오류가 났어요: ' + err.message }; // 사용자에게 그대로 보이는 문구 — '마크다운' 같은 말은 쓰지 않는다
   }
 });
 
@@ -1266,7 +1046,9 @@ ipcMain.handle('agent:import', async (e) => {
     apiKey: '',                         // 결정 A: 키는 복원 안 함(새 기기서 재입력)
     apiKeys: {},
     models: {},
-    humanFacts: data.humanFacts,
+    userMemory: data.userMemory || '',
+    refMemory: data.refMemory || '',
+    humanFacts: data.humanFacts || [],   // 옛 파일(v1.2 이하) 복원분 — 첫 실행에 통짜로 흡수된다
     work: data.work || { activeId: null, projects: [], routines: [] }, // 작업기억 복원
     createdAt: new Date().toISOString(),
     importedFrom: {
@@ -1291,6 +1073,6 @@ ipcMain.handle('agent:import', async (e) => {
   // 일화(함께한 일) 복원 — saveAgent는 episodes를 안 쓰므로(addEpisodes 소유) 명시 복원. 원본 날짜 보존.
   if (Array.isArray(data.episodes) && data.episodes.length) storage.addEpisodes(newAgent.id, data.episodes);
 
-  console.log(`[agent:import] 에이전트 복원 완료: "${newAgent.name}" (id=${newAgent.id}, 기억=${data.humanFacts.length}개, 일화=${(data.episodes||[]).length}개, 대화=${conversation.length}개, 작업=${(newAgent.work.projects||[]).length}프로젝트)`);
+  console.log(`[agent:import] 에이전트 복원 완료: "${newAgent.name}" (id=${newAgent.id}, 기억=${(newAgent.userMemory||'').length}자${(data.humanFacts||[]).length ? ` + 옛 낱개 ${data.humanFacts.length}개(첫 실행에 흡수)` : ''}, 일화=${(data.episodes||[]).length}개, 대화=${conversation.length}개, 작업=${(newAgent.work.projects||[]).length}프로젝트)`);
   return { agent: newAgent, conversationCount: conversation.length };
 });

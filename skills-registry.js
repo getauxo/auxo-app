@@ -4,7 +4,7 @@
  * 클로드 Agent Skills 방식: 스킬 = 폴더(SKILL.md + 선택적 동봉파일).
  * SKILL.md 프론트매터(name, description)만 평소 노출 → 필요할 때 본문 펼침(점진적 공개).
  *
- * ★ 에이전트별 격리(2026-06-25, 마스터 "독립 정체성" 결정):
+ * ★ 에이전트별 격리 — 에이전트는 저마다 독립된 정체성을 갖는다:
  *   스킬은 에이전트마다 독립이다. 저장 구조 = <SKILLS_ROOT>/<agentId>/<skillId>/SKILL.md
  *   신규 에이전트는 빈손으로 시작한다(번들 자동시드 없음). 한 에이전트가 설치한 스킬은 그 에이전트만 본다.
  *   → 모든 조회/설치/삭제 함수는 agentId 를 받는다.
@@ -142,7 +142,7 @@ function loadCatalog() {
 }
 
 // ── 3a: 카탈로그 라이브화 ─────────────────────────────────────────────────
-// 정적 skills-catalog.json 은 2026-06-18 냉동 스냅샷 → 그 뒤 anthropics/skills 에 생긴 스킬이 안 보였다.
+// 정적 skills-catalog.json 은 냉동 스냅샷이라, 그 뒤 anthropics/skills 에 생긴 스킬이 안 보인다.
 // find_skill 시 GitHub 폴더 목록을 조회(TTL 캐시)해 신규 스킬도 검색·설치되게 한다. 네트워크 실패 시 정적 카탈로그로 degrade.
 const LIVE_TTL_MS = 60 * 60 * 1000; // 1시간
 // source-available(재배포 금지, 카탈로그 notes 기준) — 자동설치 제외.
@@ -181,8 +181,9 @@ function searchCatalog(query) {
     const score = toks.filter(t => hay.includes(t)).length;
     return { id: s.id, name: s.name, description: s.description, score, ...(s.live ? { live: true } : {}) };
   });
-  const hits = scored.filter(s => s.score > 0).sort((a, b) => b.score - a.score);
-  return (hits.length ? hits : scored).slice(0, 5).map(({ score, ...s }) => s);
+  // 못 찾으면 빈손으로 돌려준다. 점수 0인데도 목록을 채워 보내면,
+  // 그건 에이전트에게 "이게 검색 결과다"라는 거짓을 넘기는 것이었다. MCP 쪽도 같은 이유로 고쳤다.
+  return scored.filter(s => s.score > 0).sort((a, b) => b.score - a.score).slice(0, 5).map(({ score, ...s }) => s);
 }
 
 /**

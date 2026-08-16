@@ -24,6 +24,7 @@
     <div id="app-menu" class="app-menu hidden no-drag">
       <button id="btn-open-settings" class="app-menu-item">⚙️ 설정</button>
       <button id="btn-open-notifications" class="app-menu-item">🔔 알림</button>
+      <button id="btn-open-about" class="app-menu-item">💬 문의·소개</button>
     </div>
   </div>
   <div class="titlebar-wordmark">Auxo</div>
@@ -59,7 +60,10 @@
           <input type="radio" name="brain-mode" value="claude-subscription" checked>
           <div class="brain-card-inner">
             <div class="brain-card-title">Claude 구독으로 연결</div>
-            <div class="brain-card-desc">내 Claude 구독으로 바로 시작. 추가 요금 없음.</div>
+            <!-- ★"바로 시작"이라고 쓰면 사실과 다르다. 구독은 각 회사의 연결 프로그램(CLI)이
+                 필요하고 그게 Node.js 위에서 돈다. 고르는 자리에서 준비 부담이 안 보이면
+                 다음 화면에서 막힌다 — 어느 쪽이 쉽다는 얘기가 아니라 **안내가 정확해야 한다**. -->
+            <div class="brain-card-desc">내 Claude 구독 그대로 · 추가 요금 없음<br><span class="brain-card-note">연결 프로그램 설치가 필요해요 (버튼으로 안내)</span></div>
           </div>
         </label>
 
@@ -67,15 +71,10 @@
           <input type="radio" name="brain-mode" value="codex-subscription">
           <div class="brain-card-inner">
             <div class="brain-card-title">Codex 구독으로 연결 (ChatGPT)</div>
-            <div class="brain-card-desc">내 ChatGPT 구독으로 바로 시작. 추가 요금 없음.</div>
+            <div class="brain-card-desc">내 ChatGPT 구독 그대로 · 추가 요금 없음<br><span class="brain-card-note">연결 프로그램 설치가 필요해요 (버튼으로 안내)</span></div>
           </div>
         </label>
 
-        <!-- Antigravity: 2026-07-16 비활성화(선택지에서 제외).
-             이유: agy CLI 는 프롬프트를 명령줄 인자로만 받는다(stdin 미지원 — `agy --print` 는 인자 필수).
-                   CreateProcess 한계로 약 32,000자가 상한이고, 시스템프롬프트를 빼면 대화 몫이 약 6,000 토큰뿐이라
-                   기억 설계(최근 20,000 토큰 원문 보존)를 담지 못한다.
-             코드(brain-antigravity.js)는 남겨둠 — 전달 방식이 개선되면 되살린다. 완전 제거는 추후 논의. -->
 
         <label class="brain-card" data-value="gemini-api">
           <input type="radio" name="brain-mode" value="gemini-api">
@@ -90,14 +89,14 @@
             <input type="radio" name="brain-mode" value="claude-api">
             <div class="brain-card-inner">
               <div class="brain-card-title">Claude API 키로 연결</div>
-              <div class="brain-card-desc">내 Anthropic API 키로 Claude 사용 (도구·웹검색·이미지·PDF).</div>
+              <div class="brain-card-desc">내 Anthropic API 키로 Claude 사용.</div>
             </div>
           </label>
           <label class="brain-card" data-value="openai-api">
             <input type="radio" name="brain-mode" value="openai-api">
             <div class="brain-card-inner">
               <div class="brain-card-title">GPT (OpenAI) API 키로 연결</div>
-              <div class="brain-card-desc">내 OpenAI API 키로 GPT 사용 (도구·이미지).</div>
+              <div class="brain-card-desc">내 OpenAI API 키로 GPT 사용.</div>
             </div>
           </label>
           <label class="brain-card" data-value="openai-compatible">
@@ -128,13 +127,6 @@
 
       <!-- A. 구독: 설치/로그인 게이트 -->
       <div id="prep-sub" class="hidden">
-        <div id="agy-notice" class="agy-notice hidden">
-          <div class="agy-notice-title">Antigravity, 이것만 알아두세요</div>
-          <ul>
-            <li>이 AI는 <b>내 컴퓨터의 파일과 프로그램에 넓게 접근</b>할 수 있어요. 다른 AI와 달리 앱의 폴더 제한·확인 절차가 적용되지 않으니, <b>믿을 수 있는 본인 컴퓨터</b>에서 쓰는 걸 권해요.</li>
-            <li>앱에 추가한 <b>스킬·도구는 이 AI에선 쓸 수 없어요.</b> 대신 대화·웹검색·파일 정리는 자체 기능으로 잘 돼요.</li>
-          </ul>
-        </div>
         <div id="cli-gate" class="cli-gate">
           <div class="cli-gate-head">
             <span id="cli-gate-icon">🔌</span>
@@ -175,18 +167,29 @@
             <div class="prep-title">발급한 키 붙여넣기</div>
             <div id="api-config-area" class="api-key-wrap">
               <input type="password" id="api-key" placeholder="API 키 입력" class="api-key-input" autocomplete="off">
-              <input type="text" id="api-model" placeholder="모델 (선택 — 비우면 기본값)" class="api-key-input">
               <p class="hint" id="api-key-hint"></p>
             </div>
             <p class="prep-note">🔒 키는 이 PC에만 저장돼요. 외부로 나가지 않아요.</p>
           </div>
         </div>
 
+        <!-- ★③단계는 "연결 확인"이 아니라 "쓸 모델 고르기"다.
+             기본 모델을 두지 않으므로(폐기되면 두뇌가 통째로 죽는다) 모델 고르기가 필수 단계다.
+             ★"연결 테스트" 버튼은 두지 않는다 — **목록 조회가 성공했다는 건 키가 유효하다는 뜻**이라
+               같은 일을 두 번 시키는 셈이다. 한 단계가 한 가지만 시킨다. -->
         <div class="prep-row">
           <div class="prep-num">3</div>
           <div class="prep-main">
-            <div class="prep-title">연결 확인</div>
-            <button id="api-test-btn" class="btn-secondary btn-sm">연결 테스트</button>
+            <div class="prep-title">사용할 모델 고르기</div>
+            <div class="prep-desc">키를 확인하고, 지금 쓸 수 있는 모델을 불러와요. <strong>골라야 다음으로 넘어갈 수 있어요.</strong></div>
+            <div class="model-pick">
+              <button id="api-model-load" class="btn-secondary btn-sm" disabled>모델 불러오기</button>
+              <input type="text" id="api-model-search" class="api-key-input hidden" placeholder="모델 검색">
+              <select id="api-model" class="api-key-input hidden" size="6"></select>
+              <!-- OpenAI 호환(OpenRouter 등)은 제공자가 제각각이라 목록 규격을 보장 못 한다 → 직접 입력 -->
+              <input type="text" id="api-model-manual" class="api-key-input hidden" placeholder="모델명 (제공자 문서 참고)">
+              <p class="hint" id="api-model-msg"></p>
+            </div>
             <div id="api-test-result" class="api-test-result hidden"></div>
           </div>
         </div>
@@ -227,19 +230,12 @@
         </div>
       </div>
 
-      <!-- 기억 패널: 사이드바에서 숨김. 기억 조회·정정·삭제는 모두 대화로(remember/forget 도구). 설정 기억관리 UI도 2026-06-24 제거. -->
-      <!-- DOM은 유지(renderFacts 참조 오류 방지), display:none으로 숨김 -->
+      <!-- 기억 목록은 화면에 두지 않는다(조회·정정·삭제는 전부 대화로 — remember/forget).
+           껍데기 DOM 을 "참조 오류 방지"로 남겨두면 죽은 코드를 살아 있는 것으로 읽게 되므로,
+           참조하던 코드와 함께 지웠다.
+           페르소나 표시(#memory-persona)만 설정 저장 후 갱신에 쓰이므로 남긴다. -->
       <div class="memory-panel" style="display:none" aria-hidden="true">
-        <div class="memory-section">
-          <h4>에이전트 페르소나</h4>
-          <p id="memory-persona" class="memory-text">-</p>
-        </div>
-        <div class="memory-section">
-          <h4>에이전트가 나에 대해 아는 것 <span id="fact-count" class="badge">0</span></h4>
-          <ul id="memory-facts" class="fact-list">
-            <li class="fact-empty">아직 없음. 대화를 나눠보세요!</li>
-          </ul>
-        </div>
+        <p id="memory-persona" class="memory-text">-</p>
       </div>
 
       <!-- 활용 허브: 에이전트를 잘 쓰게 해주는 기능 메뉴 -->
@@ -254,12 +250,14 @@
           <span class="nav-item-label">능력</span>
         </button>
 
-        <!-- L1 "일" 섹션 제거(2026-06-24): 친구 컨셉 유지 위해 상시 UI 미노출.
+        <!-- L1 "일" 섹션은 상시 UI 로 두지 않는다: 친구 컨셉을 지키기 위해서.
              일 시작은 대화(사용자가 "프로젝트로 하자")→도구 자동 호출로 처리.
              백엔드·도구·app.js 핸들러는 그대로(전부 null 가드)라 필요 시 복원 가능. -->
       </nav>
 
-      <div class="sidebar-foot" id="sidebar-version">v0.1.0 · 로컬 실행 중</div>
+      <!-- 번호를 여기 적지 않는다. app.js 가 실제 앱 버전으로 채운다(app:info).
+           예전엔 `v0.1.0` 이 글자로 박혀 있어 package.json 을 올려도 화면은 안 바뀌었다. -->
+      <div class="sidebar-foot" id="sidebar-version">로컬 실행 중</div>
 
     </aside>
 
@@ -344,14 +342,14 @@
 
       <!-- 사용자 지침 (AUXO.md) -->
       <div class="settings-section">
-        <h3 class="settings-section-title" style="text-transform:none">지침 (AUXO.md)</h3>
+        <h3 class="settings-section-title">지침 (AUXO.md)</h3>
         <textarea id="settings-auxomd" rows="6" placeholder="에이전트가 항상 지킬 규칙·지침을 자유롭게 써주세요.&#10;예) 답변은 항상 핵심부터 요약해줘.&#10;예) 코드는 파이썬으로, 주석은 한국어로.&#10;예) 외부로 메시지 보내기 전엔 꼭 확인해."></textarea>
         <p class="hint">내 에이전트만의 규칙이에요. 평소 행동·말투·형식에 반영돼요.</p>
       </div>
 
       <!-- 도구 사용 자율도 (승인 정도) -->
       <div class="settings-section">
-        <h3 class="settings-section-title" style="text-transform:none">도구 사용 자율도</h3>
+        <h3 class="settings-section-title">도구 사용 자율도</h3>
         <select id="settings-trust" class="api-key-input">
           <option value="ask_all">매번 물어봄 (모든 변경 작업에 확인)</option>
           <option value="ask_risky">위험 작업만 물어봄 (기본 — 쓰기·삭제 등만 확인)</option>
@@ -370,10 +368,10 @@
         <select id="settings-brain" class="api-key-input">
           <option value="claude-subscription">Claude 구독</option>
           <option value="codex-subscription">Codex 구독 (ChatGPT)</option>
-          <!-- Antigravity: 2026-07-16 비활성화 — agy stdin 미지원(~32,000자 한계)이라 기억 설계 수용 불가. 코드는 보존. -->
           <option value="gemini-api">Gemini API</option>
           <option value="claude-api">Claude API</option>
-          <option value="openai-api">GPT (OpenAI)</option>
+          <!-- 다른 항목이 "Gemini API"·"Claude API" 이므로 여기도 API 를 붙여 통일한다. -->
+          <option value="openai-api">GPT (OpenAI) API</option>
           <option value="openai-compatible">기타 모델 (OpenAI 호환)</option>
         </select>
         <!-- OpenAI 호환: 제공자 프리셋 + base URL (openai-compatible 선택 시만 표시) -->
@@ -391,27 +389,15 @@
         </div>
         <div id="settings-api-config" class="hidden api-key-wrap">
           <input type="password" id="settings-api-key" placeholder="API 키 입력" class="api-key-input" autocomplete="off">
-          <input type="text" id="settings-model" placeholder="모델 (선택 — 비우면 기본값)" class="api-key-input">
-          <p class="hint" id="settings-api-hint"></p>
-        </div>
-        <!-- Antigravity 전용: 여러 모델(Gemini·Claude·GPT) 중 선택. 모델마다 사용량 한도가 따로. -->
-        <div id="settings-agy-config" class="hidden api-key-wrap">
-          <select id="settings-agy-model" class="api-key-input">
-            <option value="">기본 (Gemini 3.5 Flash · 빠름)</option>
-            <option value="Gemini 3.5 Flash (High)">Gemini 3.5 Flash (High)</option>
-            <option value="Gemini 3.1 Pro (High)">Gemini 3.1 Pro (고성능)</option>
-            <option value="Claude Sonnet 4.6 (Thinking)">Claude Sonnet 4.6</option>
-            <option value="Claude Opus 4.6 (Thinking)">Claude Opus 4.6 (최고성능)</option>
-            <option value="GPT-OSS 120B (Medium)">GPT-OSS 120B</option>
-          </select>
-          <p class="hint">Antigravity는 여러 모델을 함께 제공해요. 모델마다 사용량 한도가 따로라, 한 모델이 한도에 걸리면 다른 모델로 바꿔 쓸 수 있어요.</p>
-          <div class="agy-notice">
-            <div class="agy-notice-title">알아두세요</div>
-            <ul>
-              <li>이 AI는 <b>내 컴퓨터의 파일과 프로그램에 넓게 접근</b>할 수 있어요. 다른 AI와 달리 앱의 폴더 제한·확인 절차가 적용되지 않으니, <b>믿을 수 있는 본인 컴퓨터</b>에서 쓰는 걸 권해요.</li>
-              <li>앱에 추가한 <b>스킬·도구는 이 AI에선 쓸 수 없어요.</b> 대신 대화·웹검색·파일 정리는 자체 기능으로 잘 돼요.</li>
-            </ul>
+          <!-- 온보딩과 같은 구조(모델 고르기). 설명은 index.html 온보딩 쪽 주석 참고. -->
+          <div class="model-pick">
+            <button id="settings-model-load" class="btn-secondary btn-sm">모델 불러오기</button>
+            <input type="text" id="settings-model-search" class="api-key-input hidden" placeholder="모델 검색">
+            <select id="settings-model" class="api-key-input hidden" size="6"></select>
+            <input type="text" id="settings-model-manual" class="api-key-input hidden" placeholder="모델명 (제공자 문서 참고)">
+            <p class="hint" id="settings-model-msg"></p>
           </div>
+          <p class="hint" id="settings-api-hint"></p>
         </div>
       </div>
 
@@ -421,7 +407,7 @@
 
       <!-- 메신저 연결 (텔레그램) -->
       <div class="settings-section">
-        <h3 class="settings-section-title" style="text-transform:none">텔레그램으로 연결</h3>
+        <h3 class="settings-section-title">텔레그램으로 연결</h3>
         <p class="hint">이 에이전트를 텔레그램에서도 만날 수 있어요. 앱이 켜져 있는 동안 작동해요.</p>
         <div id="tg-disconnected">
           <ol class="tg-steps">
@@ -441,7 +427,7 @@
 
       <!-- 메신저 연결 (디스코드) -->
       <div class="settings-section">
-        <h3 class="settings-section-title" style="text-transform:none">디스코드로 연결</h3>
+        <h3 class="settings-section-title">디스코드로 연결</h3>
         <p class="hint">이 에이전트를 디스코드에서도 만날 수 있어요. 앱이 켜져 있는 동안 작동해요.</p>
         <div id="dc-disconnected">
           <ol class="tg-steps">
@@ -464,41 +450,35 @@
 
       <div class="tab-panel" data-panel="data">
 
-      <!-- 에이전트 관리 (내보내기) — 단일 에이전트 정책: '새 에이전트 만들기' 제거(2026-06-24) -->
+      <!-- 에이전트 관리 (내보내기) — 단일 에이전트 정책: '새 에이전트 만들기'는 두지 않는다 -->
       <div class="settings-section">
         <h3 class="settings-section-title">내보내기</h3>
-        <p class="hint">무엇을 내보낼지 골라주세요.</p>
-        <div class="brain-options" id="export-scope-options">
-          <label class="brain-card" data-value="identity">
-            <input type="radio" name="export-scope" value="identity" checked>
-            <div class="brain-card-inner">
-              <div class="brain-card-title">인격만 내보내기 <span class="brain-badge recommended">추천</span></div>
-              <div class="brain-card-desc">이름·성격·기억·관계만. 가볍게 옮기거나 공유할 때.</div>
-            </div>
-          </label>
-          <label class="brain-card" data-value="full">
-            <input type="radio" name="export-scope" value="full">
-            <div class="brain-card-inner">
-              <div class="brain-card-title">완전 백업</div>
-              <div class="brain-card-desc">위 내용 + 프로젝트·작업·전체 대화 원문까지. 기기를 통째로 옮길 때.</div>
-            </div>
-          </label>
-        </div>
-        <p class="hint export-secure">🔒 API 키는 어느 쪽에도 포함되지 않아요.</p>
+        <p class="hint">지금까지의 대화와 기억을 파일로 보관해요.</p>
+        <!-- '인격만/완전백업' 라디오와 '사적인 기억 빼고' 체크박스는 두지 않는다.
+             ①백업은 전부 담아야 백업이다 — '인격만'을 골라 저장하면 나중에 불러올 때 대화가 사라지는데,
+               거기에 '추천' 배지까지 붙어 있었다(데이터 잃는 길을 권하고 있었다).
+             ②'사적인 기억 빼고'는 지키지 못하는 약속이었다 — 건강 정보는 애초에 제외 대상이 아니고
+               (추출 규칙상 sensitive=false 강제), 대화 원문은 걸러내지도 않는다. 실측: '당뇨'가
+               체크한 결과물에 기억 2회·대화 4회 그대로 남았다. 설계 당시에도 "완벽하지 않으니 안내
+               권장"으로 적혀 있었는데 그 안내가 화면에 없었다 → 거짓 안심만 남았다.
+             그래서 고르게 하는 대신 무엇이 담기는지 알린다. -->
+        <p class="hint export-secure">🔒 비밀번호와 API 키는 저장되지 않아요.</p>
         <div class="agent-manage-actions">
-          <button id="btn-export" class="btn-secondary btn-full">내보내기</button>
+          <button id="btn-export" class="btn-secondary btn-full">파일 하나로 저장하기</button>
+          <p class="hint" style="margin-top:6px">나중에 이 앱에 다시 불러올 수 있어요</p>
           <div id="export-path" class="export-path hidden"></div>
-          <button id="btn-export-md" class="btn-secondary btn-full" style="margin-top:10px">읽기용 폴더로 내보내기 (마크다운)</button>
-          <label style="display:block;margin-top:6px;font-size:13px;color:var(--fg-soft)"><input type="checkbox" id="export-exclude-sensitive"> 사적인 기억(트라우마·슬픔 등)은 빼고 내보내기</label>
+
+          <button id="btn-export-md" class="btn-secondary btn-full" style="margin-top:16px">읽을 수 있는 글로 저장하기</button>
+          <p class="hint" style="margin-top:6px">메모장으로 열어보거나 다른 AI에게 넘길 수 있어요</p>
           <div id="export-md-path" class="export-path hidden"></div>
+
+          <p class="hint export-notice">두 방법 모두 <b>대화와 기억이 전부 담깁니다.</b> 건강처럼
+          민감한 내용도 들어가니, 남에게 보내거나 다른 AI에 올릴 때는 한 번 살펴봐 주세요.</p>
         </div>
       </div>
 
-      <div class="settings-section">
-        <h3 class="settings-section-title">도움말·문의</h3>
-        <p class="hint">궁금하거나 불편한 점이 있으면 편하게 메일 주세요.</p>
-        <p style="font-size:14px;margin-top:4px"><a href="mailto:hello@getauxo.app">hello@getauxo.app</a></p>
-      </div>
+      <!-- '도움말·문의'는 여기 두지 않는다. 설정>데이터 맨 아래는 찾기 어려운 자리다.
+           도네이션 화면을 만들 때 그쪽에 함께 넣는다. 문의 메일 주소 = hello@getauxo.app -->
 
       </div><!-- /panel data -->
 
@@ -532,7 +512,7 @@
 
       <!-- 기본 능력 (항상 켜져 있음 — 대화하면 알아서 씀) -->
       <div class="settings-section">
-        <h3 class="settings-section-title" style="text-transform:none; display:flex; align-items:baseline; gap:6px; flex-wrap:wrap">기본 능력 <span class="hint" style="font-weight:normal">· 항상 켜져 있어요</span></h3>
+        <h3 class="settings-section-title" style="display:flex; align-items:baseline; gap:6px; flex-wrap:wrap">기본 능력 <span class="hint" style="font-weight:normal">· 항상 켜져 있어요</span></h3>
         <p class="hint">따로 설치할 필요 없이, 대화하면 에이전트가 알아서 사용해요.</p>
         <ul class="ability-base-list">
           <li><span class="ability-ic">🧠</span> <b>기억</b> — 중요한 걸 기억하고 떠올려요</li>
@@ -571,7 +551,7 @@
 
       <!-- 스킬 (SKILL.md 패키지) -->
       <div class="settings-section" id="settings-capabilities">
-        <h3 class="settings-section-title" style="text-transform:none">스킬 (SKILL.md)</h3>
+        <h3 class="settings-section-title">스킬 (SKILL.md)</h3>
         <p class="hint">SKILL.md가 든 폴더를 가져와 설치하면, 에이전트가 관련 작업에서 스스로 펼쳐 사용해요.</p>
         <ul id="settings-skills-list" class="settings-skills-list"></ul>
         <button id="btn-import-skill" class="btn-secondary btn-full">+ 스킬 가져오기 (폴더)</button>
@@ -596,17 +576,8 @@
           <div id="mcp-catalog-list" class="settings-skills-list"></div>
         </div>
 
-        <details class="mcp-advanced">
-          <summary>직접 추가 (명령 / JSON 붙여넣기)</summary>
-          <div class="mcp-add-form">
-            <input type="text" id="mcp-name" placeholder="이름 (예: filesystem)" class="api-key-input">
-            <input type="text" id="mcp-command" placeholder="실행 명령 (예: npx)" class="api-key-input">
-            <input type="text" id="mcp-args" placeholder="인자 (공백 구분, 예: -y @modelcontextprotocol/server-filesystem .)" class="api-key-input">
-            <button id="btn-add-mcp" class="btn-secondary btn-full">+ 명령으로 추가</button>
-          </div>
-          <textarea id="mcp-json" rows="3" placeholder='MCP JSON 붙여넣기 — 예: {"mcpServers":{"memory":{"command":"npx","args":["-y","@modelcontextprotocol/server-memory"]}}}' class="api-key-input" style="margin-top:8px"></textarea>
-          <button id="btn-add-mcp-json" class="btn-secondary btn-full" style="margin-top:8px">JSON으로 추가</button>
-        </details>
+        <!-- '직접 추가(명령/JSON)'은 두지 않는다: 신뢰검사 없이 임의 명령을 등록하는 우회 통로가 된다.
+             MCP 확장은 능력 메뉴(빠른 추가) + 에이전트 대화(find_mcp→install_mcp, 신뢰 스코프만)로 일원화. -->
       </div>
 
       </div><!-- /panel mcp -->
@@ -641,6 +612,62 @@
         <h3 class="settings-section-title">알림 설정</h3>
         <label class="skill-toggle"><input type="checkbox" id="settings-notice-off"> 새 소식·업데이트 확인 받지 않기</label>
         <p class="hint">앱이 가끔 새 소식(업데이트·플랫폼 안내)을 확인해 알려줘요. 개인정보는 보내지 않고 받기만 합니다. 끄면 확인하지 않아요.</p>
+      </div>
+
+    </div>
+
+  </div>
+</div>
+
+<!-- ── 문의·소개 (햄버거 메뉴) ────────────────────────────
+     설정>데이터 맨 아래 묻혀 있던 '도움말·문의'를 여기로 옮겼다.
+     후원 버튼은 넣지 않는다 — 무료 포지셔닝을 굳혀 나중에 값을 매기기 어려워지므로. -->
+<div id="screen-about" class="modal-screen">
+  <div class="settings-layout">
+    <button class="modal-close" aria-label="닫기" title="닫기 (Esc)">✕</button>
+
+    <div class="settings-header">
+      <h2>문의·소개</h2>
+    </div>
+
+    <div class="settings-body">
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">Auxo를 만든 이야기</h3>
+        <p class="hint">AI 에이전트가 좋다는 얘기는 많은데, 막상 써보려면 터미널을 켜고 설정을
+        만지고 키를 넣어야 했어요. 개발자가 아니면 시작부터 막힙니다.</p>
+        <p class="hint" style="margin-top:8px">그게 아쉬워서 만들었어요. 내려받아 이름 하나
+        지어주면 시작이고, 그다음은 그냥 이야기하면 됩니다.</p>
+        <p class="hint" style="margin-top:8px">대화도 기억도 이 컴퓨터에만 남습니다. 우리 서버로
+        보내지 않아요. 어떤 AI를 쓸지 직접 고르시고, 나중에 바꾸셔도 기억은 그대로 남습니다.</p>
+      </div>
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">문의</h3>
+        <p class="hint">궁금한 점이나 안 되는 게 있으면 편하게 메일 주세요.
+        개선 의견도 언제든 보내주세요.</p>
+        <p style="font-size:15px;margin-top:6px"><a href="mailto:hello@getauxo.app">hello@getauxo.app</a>
+          &nbsp;·&nbsp; <a href="#" id="link-github-issue">GitHub에 알리기 ↗</a></p>
+
+        <!-- 문제 기록 — 안 될 때 원인을 찾으려면 이게 필요하다.
+             ★자동으로 보내지 않는다. 파일로 받아서 **직접 열어 보고** 사용자가 보낼지 정한다.
+               (개인정보 방침: "우리가 수집하거나 보관하는 것은 없습니다" — 그 약속과 어긋나면 안 된다) -->
+        <p class="hint" style="margin-top:14px">문제가 있었다면 <b>문제 기록</b>을 함께 보내주시면
+          원인을 훨씬 빨리 찾을 수 있어요. 파일로 저장해서 열어보실 수 있고,
+          대화 내용·기억·비밀번호 같은 건 담기지 않아요.</p>
+        <button id="btn-save-errorlog" class="btn-secondary" style="margin-top:6px">문제 기록 파일로 저장</button>
+        <p class="hint" id="errorlog-result" style="margin-top:6px"></p>
+      </div>
+
+      <div class="settings-section">
+        <h3 class="settings-section-title">더 보기</h3>
+        <p class="hint">
+          <a class="ext-link" data-url="https://getauxo.app">홈페이지 ↗</a>
+          &nbsp;·&nbsp;
+          <a class="ext-link" data-url="https://getauxo.app/faq.html">자주 묻는 질문 ↗</a>
+          &nbsp;·&nbsp;
+          <a class="ext-link" data-url="https://getauxo.app/privacy.html">데이터·개인정보 ↗</a>
+        </p>
       </div>
 
     </div>

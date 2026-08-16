@@ -53,7 +53,7 @@ function _inDir(t, dd) { return t === dd || t.startsWith(dd + path.sep) || t.sta
 //  · APP_ROOT   : Auxo 프로그램 폴더(brain-*.js·engine.js·시스템프롬프트·정직층·도구코어 전부)
 //  · CLAUDE_DIR : 호스트 Claude Code 설정·전역지침(CLAUDE.md)·플러그인 (정체성 오염원)
 //  · _protectedData : userData(대화·기억·API키·스킬/MCP 레지스트리) — 단 download(사용자 첨부)는 제외
-// 정책(마스터 2026-07-15): "스킬이든 MCP든 우리 계층·지침 직접 수정은 뭘 통해서든 불가." 프롬프트가 아니라 코드로 강제.
+// 정책: "스킬이든 MCP든 우리 계층·지침 직접 수정은 뭘 통해서든 불가." 프롬프트가 아니라 코드로 강제.
 const APP_ROOT = _cmp(__dirname);
 const CLAUDE_DIR = _cmp(path.join(HOME, '.claude'));
 let _protectedData = [];
@@ -85,7 +85,7 @@ function commandMentionsProtected(cmd) {
   if (_downloadDir && norm.includes(_downloadDir)) norm = norm.split(_downloadDir).join(' ');
   const roots = [APP_ROOT, CLAUDE_DIR, ..._protectedData];
   if (roots.some(r => r && norm.includes(r))) return true; // 절대경로 직접 겨냥
-  // 상대경로 우회 완화: 보호 폴더 '이름'이 경로 조각으로 나와도 차단(예: ../agentlink-app/…, .claude/…).
+  // 상대경로 우회 완화: 보호 폴더 '이름'이 경로 조각으로 나와도 차단(예: ../<앱폴더>/…, .claude/…).
   const names = [path.basename(APP_ROOT), '.claude'];
   return names.some(n => n && new RegExp('(^|[\\s"\'\\\\/])' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\\\/]', 'i').test(s));
 }

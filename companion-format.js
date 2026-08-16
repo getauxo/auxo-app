@@ -10,8 +10,7 @@
  */
 
 const FORMAT_ID = 'auxo.companion';
-const LEGACY_FORMAT_IDS = ['agentlink.companion']; // 제품명 확정(Auxo) 전 내보낸 파일 — 계속 읽어준다
-const FORMAT_VERSION = '1.2';            // v1.2: 일화(episodes) + 사실 전체필드 백업. v1.1=완전백업(work+전체대화). v1.0=최근20턴·work없음
+const FORMAT_VERSION = '1.3';            // v1.3: 기억 그릇이 통짜 글(userMemory/refMemory). v1.2=일화+사실전체필드. v1.1=완전백업. v1.0=최근20턴
 const BASE_LAYER_VERSION = '1층-v0.1';  // 결정 B: 버전 참조만
 const RECENT_TURNS = 20;                 // (구 v1.0 호환 참조용)
 
@@ -43,9 +42,15 @@ function serialize(agent, messages, conversationSummary = '', opts = {}) {
     // apiKey 는 의도적으로 제외
   };
 
-  // 기억(사실): 전체 필드 보존 → 복원 충실(subject/importance/emotion/sensitive/scope 등).
-  //   _emb/_embKey(임베딩 캐시)만 제외 — 모델별·재생성 가능이라 담을 이유 없음.
-  const memory = (agent.humanFacts || []).map(f => { const { _emb, _embKey, ...rest } = f || {}; return rest; });
+  // 기억(그릇): 통짜 글 두 덩어리 — 이 사람에 대한 것(userMemory) / 문서에서 온 것(refMemory).
+  //   ★통짜 그릇. 옛 파일 호환을 위해 memory(낱개 배열) 자리는 남겨 두되 항상 빈 배열이다.
+  //   옛 낱개 데이터가 아직 남아 있으면 글로 풀어 담는다(유실 방지).
+  const _um = require('./user-memory');
+  const _snap = { userMemory: agent.userMemory || '', refMemory: agent.refMemory || '', humanFacts: agent.humanFacts || [] };
+  _um.absorbLegacyFacts(_snap);
+  const userMemoryText = _snap.userMemory;
+  const refMemoryText = _snap.refMemory;
+  const memory = []; // 옛 포맷 자리 유지(읽는 쪽 호환)
   // 일화(episodes, v3-A): "우리가 함께한 일". 이전 포맷에서 통째 빠져 있던 버그 → 여기서 백업.
   const episodes = Array.isArray(agent.episodes) ? agent.episodes : [];
 
@@ -65,7 +70,9 @@ function serialize(agent, messages, conversationSummary = '', opts = {}) {
     },
     identity,
     preferences,
-    memory,
+    memory,                       // 옛 낱개 포맷 자리(항상 []). 읽는 쪽 호환용
+    userMemory: userMemoryText,   // v1.3: 이 사람에 대한 기억(통짜 글)
+    refMemory: refMemoryText,     // v1.3: 첨부·문서에서 온 정보(통짜, 본인 사실과 분리)
     episodes,   // 일화(함께한 일) — v1.2 추가(복원 시 유실 버그 수정)
     // 작업기억(프로젝트·루틴)은 완전 백업일 때만. 인격 레이어 내보내기엔 빈 컨테이너(업무는 성격이 달라 분리).
     work: includeWork ? (agent.work || { activeId: null, projects: [], routines: [] })
@@ -98,15 +105,14 @@ function deserialize(raw) {
   if (!raw || typeof raw !== 'object') {
     return { ok: false, error: '파일 형식이 올바르지 않아요. JSON 객체가 아닙니다.' };
   }
-  // 옛 이름으로 내보낸 파일도 받아준다(제품명만 바뀌었을 뿐 내용 구조는 동일).
-  if (raw.format !== FORMAT_ID && !LEGACY_FORMAT_IDS.includes(raw.format)) {
+  if (raw.format !== FORMAT_ID) {
     return { ok: false, error: `포맷 ID가 맞지 않아요. (기대: "${FORMAT_ID}", 파일: "${raw.format}")` };
   }
   if (!raw.formatVersion) {
     return { ok: false, error: '포맷 버전이 없는 파일이에요.' };
   }
   // 지원 버전: 1.0(구·최근대화·work없음) + 1.1(완전백업) 모두 복원
-  const SUPPORTED_VERSIONS = ['1.0', '1.1', '1.2'];
+  const SUPPORTED_VERSIONS = ['1.0', '1.1', '1.2', '1.3'];
   if (!SUPPORTED_VERSIONS.includes(raw.formatVersion)) {
     return { ok: false, error: `지원하지 않는 포맷 버전이에요. (지원: ${SUPPORTED_VERSIONS.join('/')}, 파일: "${raw.formatVersion}")` };
   }
@@ -135,7 +141,10 @@ function deserialize(raw) {
     apiKey: '',
     apiKeys: {},
     models: {},
-    // 사실: 전체 필드 보존 복원(_emb 캐시만 제외). 옛 v1.0/1.1 파일은 필드가 적지만 로드 시 ensureMemoryShape가 보강.
+    // 기억 그릇(v1.3 통짜). 옛 파일(v1.0~1.2)은 낱개 배열이라 humanFacts 로 실어 두면
+    //   첫 실행 때 absorbLegacyFacts 가 글로 풀어 흡수한다(유실 없음).
+    userMemory: typeof raw.userMemory === 'string' ? raw.userMemory : '',
+    refMemory: typeof raw.refMemory === 'string' ? raw.refMemory : '',
     humanFacts: (raw.memory || []).map(f => { const { _emb, _embKey, ...rest } = (f || {}); return { label: '', value: '', ...rest }; }),
     // 일화(함께한 일) 복원 — v1.2. (옛 파일엔 없으면 빈 배열)
     episodes: Array.isArray(raw.episodes) ? raw.episodes : [],
@@ -171,7 +180,6 @@ function _assertNoApiKey(obj, path = '') {
 
 module.exports = {
   FORMAT_ID,
-  LEGACY_FORMAT_IDS,
   FORMAT_VERSION,
   RECENT_TURNS,
   serialize,

@@ -52,6 +52,24 @@ function loginStatus() {
   }
 }
 
+/**
+ * codex stderr 에서 **실패 이유만** 뽑아낸다.
+ *
+ * codex 는 claude 와 달리 이유를 stderr 에 쓴다 — 거기까진 기존 코드가 맞았다.
+ * 문제는 **앞에서 200자만 잘라 담던 것.** 실측(`--model 없는모델`):
+ *   stderr 820자 · 실제 `ERROR: {...}` 는 **464번째 글자**에서 시작
+ *   → slice(0,200) 은 배너("Reading prompt from stdin / workdir / model / sandbox…")만 담고
+ *     정작 원인을 통째로 잘라냈다. engine.classifyBrainError 가 한도·인증을 알아볼 수 없다.
+ * → ERROR 줄이 있으면 그 줄부터, 없으면 **뒤에서부터** 남긴다(원인은 대개 끝에 있다).
+ */
+function extractStderrReason(stderr) {
+  const s = String(stderr || '').trim();
+  if (!s) return '';
+  const m = s.match(/^\s*(ERROR|error|Error)[:\s][\s\S]*$/m);
+  const body = m ? m[0].trim() : s.slice(-1200);
+  return body.slice(0, 1200);
+}
+
 /** codex exec stdout 에서 최종 응답만 뽑아낸다. */
 function extractResponse(stdout) {
   const s = String(stdout || '');
@@ -77,12 +95,29 @@ function codexGenerate(systemPrompt, userPrompt, opts = {}) {
     const _imgNote = _imgs.length ? `\n\n[사용자가 방금 첨부한 파일(이미지·PDF) — 이 파일(들)을 열어서 실제로 보고 답해. 상상하지 말고 반드시 열어봐]\n${_imgs.join('\n')}` : '';
     const fullPrompt = (systemPrompt ? systemPrompt.trim() + '\n\n──────────\n\n' : '') + (userPrompt || '') + _imgNote;
     let codexCwd; // P2: workspace-write 시 작업 폴더(= 허용폴더)
-    const args = ['exec', '--skip-git-repo-check', '--color', 'never'];
+    // --ignore-user-config: 이 PC 사용자의 codex 설정(~/.codex/config.toml)을 안 싣는다.
+    //   ★claude 는 `--setting-sources project,local` 로 **모든 호출**에서 호스트 사용자 설정을
+    //     끊는다. codex 도 같은 기준이어야 한다 — 두뇌가 달라도 안전 기준은 하나다.
+    //   실측: 이걸 빼면 사용자 설정의 MCP 가 **기억 처리 호출에 실려 실제로 호출까지 된다.**
+    //     기억 추출이 사용자의 도구를 부를 수 있다는 뜻이다.
+    //   ※ 대화 경로에도 건다 — 우리 도구는 `-c mcp_servers.auxo…` 로 따로 주입하므로 안 죽는다.
+    //     실측(_verify-codex-tools): 걸어도 **우리 것은 붙고 남의 것만 빠진다**.
+    //   ※ 목록만 비우는 방법(-c mcp_servers={})은 **안 먹힌다** — 문법 3종 전부 그대로 붙었다(실측).
+    //   ※ 같이 안 실리는 것: personality(우리는 우리 성격을 따로 준다) · notify(기억 정리에 외부 실행 불필요)
+    //     · trust_level(우리는 --skip-git-repo-check 와 -s 로 별도 처리). 인증은 CODEX_HOME 이라 유지(실측).
+    const args = ['exec', '--skip-git-repo-check', '--ignore-user-config', '--color', 'never'];
     if (opts.tools && opts.agentId) {
       // codex 도구: Auxo MCP 서버(remember/forget)를 -c 로 매 호출 동적 주입 + 자동승인.
-      // ⚠️ 비인터랙티브 자동승인을 위해 --dangerously-bypass-approvals-and-sandbox 사용 → codex 셸 샌드박스가 풀린다.
-      //    (마스터 위험감수 결정 2026-06-26. 보완책=backlog. 1층이 셸·파일 작업을 강하게 억제 중.)
+      // ★**자물쇠(샌드박스)는 건 채로 둔다.** 바이패스 없이 MCP 도구만 자동 승인된다.
+      //   방법 = 서버마다 `default_tools_approval_mode='approve'`. 아래 MCP 설정마다 함께 붙인다.
+      //   실측:
+      //     · 내장 auxo  → `remember` 호출됨(우리 DB tool_calls 흔적)
+      //     · 설치 MCP   → `sequential-thinking` 호출됨(서버가 실제로 Thought 를 출력)
+      //     · 홈 디렉터리에 파일 쓰기 시도 → **막힘**("안 됨") = 샌드박스가 살아 있다
+      //   ⚠️ 시험은 게이트웨이(URL) 경로로 해야 한다. stdio 직접 spawn 은 원래 안 붙는다(확증).
       const mcpJs = path.join(__dirname, 'auxo-mcp-tools.js').replace(/\\/g, '/');
+      // 서버마다 붙일 승인 설정 — 이걸 빠뜨린 서버는 도구가 조용히 죽는다(비대화형이라 자동 거부).
+      const 승인 = (id) => ['-c', `mcp_servers.${id}.default_tools_approval_mode='approve'`];
       const dp = String(opts.dataPath || '').replace(/\\/g, '/');
       // 배포본은 시스템 node 가 없을 수 있어 Electron 내장 node(process.execPath)로 실행.
       const nodeBin = (process.env.AUXO_MCP_NODE || 'node').replace(/\\/g, '/');
@@ -100,12 +135,15 @@ function codexGenerate(systemPrompt, userPrompt, opts = {}) {
         );
         if (process.env.AUXO_MCP_ELECTRON) args.push('-c', "mcp_servers.auxo.env.ELECTRON_RUN_AS_NODE='1'");
       }
-      // P0-b: 사용자가 설치한 MCP(브라우저·구글 등)도 codex에 연결(codex는 bypass라 별도 허용 불필요).
-      // ★상시 게이트웨이(opts.mcpHttp) 우선: 매 턴 stdio spawn하면 느린 서버가 준비 전에 지나가 도구가 안 붙음(2026-07-14 확증).
+      args.push(...승인('auxo'));
+      // P0-b: 사용자가 설치한 MCP(브라우저·구글 등)도 codex에 연결.
+      //   ★자물쇠를 건 채로 두므로 **이쪽에도 승인 설정을 붙여야 한다**
+      //   — 빠뜨리면 사용자 도구만 조용히 죽는다.
+      // ★상시 게이트웨이(opts.mcpHttp) 우선: 매 턴 stdio spawn 하면 느린 서버가 준비 전에 지나가 도구가 안 붙는다(확증).
       //   engine이 띄워둔 로컬 HTTP MCP 게이트웨이 URL로 주면 즉시 연결. 없을 때만 stdio 직접(폴백).
       const httpGws = Array.isArray(opts.mcpHttp) ? opts.mcpHttp : [];
       if (httpGws.length) {
-        for (const g of httpGws) args.push('-c', `mcp_servers.${g.id}.url='${String(g.url).replace(/'/g, '')}'`);
+        for (const g of httpGws) args.push('-c', `mcp_servers.${g.id}.url='${String(g.url).replace(/'/g, '')}'`, ...승인(g.id));
       } else try {
         const mcpManager = require('./mcp-manager');
         mcpManager.setConfigRoot(path.join(opts.dataPath || '', 'mcp'));
@@ -114,28 +152,53 @@ function codexGenerate(systemPrompt, userPrompt, opts = {}) {
           const cmd = String(s.command).replace(/\\/g, '/');
           const ar = (s.args || []).map(a => `'${String(a).replace(/\\/g, '/')}'`).join(',');
           args.push('-c', `mcp_servers.${s.id}.command='${cmd}'`, '-c', `mcp_servers.${s.id}.args=[${ar}]`);
-          // ⚠️ env(자격증명)도 넘겨야 인증형 MCP 동작(2026-07-14). TOML literal로 키별 주입.
+          // ⚠️ env(자격증명)도 넘겨야 인증형 MCP 가 동작한다. TOML literal 로 키별 주입.
           for (const [k, v] of Object.entries(s.env || {})) args.push('-c', `mcp_servers.${s.id}.env.${k}='${String(v).replace(/\\/g, '/').replace(/'/g, '')}'`);
+          args.push(...승인(s.id));
         }
       } catch (_) {}
-      // P2(결정1=A) codex 폴더 한정 — claude·gemini 와 동일하게 "허용폴더에서만". (2026-06-28 실측 작동)
-      //   허용폴더(allowedDirs)를 writable_roots 로 → 그 폴더들만 쓰기 가능, 밖은 codex 셸이 차단됨.
-      //   Windows 는 unelevated 네이티브 샌드박스(UAC/관리자 불필요). approval_policy=never 로 비인터랙티브 자동 실행.
-      //   허용폴더가 없으면 read-only(쓰기 차단; 사용자가 grant_dir 로 폴더 허용 후 쓰기 — 결정2).
-      let _dirs = [];
-      try { _dirs = (require('./storage').loadAgent(opts.agentId) || {}).allowedDirs || []; } catch (_) {}
-      if (_dirs.length) {
-        const roots = '[' + _dirs.map(d => `'${String(d).replace(/\\/g, '/')}'`).join(',') + ']';
-        const winSb = process.platform === 'win32' ? ['-c', "windows.sandbox='unelevated'"] : [];
-        args.push('-s', 'workspace-write', ...winSb, '-c', `sandbox_workspace_write.writable_roots=${roots}`, '-c', "approval_policy='never'");
-        codexCwd = _dirs[0];
-      } else {
-        args.push('-s', 'read-only', '-c', "approval_policy='never'");
-      }
+      // ★**자물쇠(샌드박스)는 건 채로 둔다.**
+      //
+      //   [왜 풀고 싶어지나]  codex 는 MCP 도구 호출마다 승인을 요구하는데 `codex exec` 는
+      //         비대화형이라 물어볼 사람이 없어 **자동 거부**된다(`user cancelled MCP tool call`).
+      //         `approval_policy='never'` 는 **셸 명령**용이라 MCP 에 안 걸린다.
+      //         `--dangerously-bypass-approvals-and-sandbox` 로 뚫으면 되는 것처럼 보이지만,
+      //         그 플래그는 승인과 **샌드박스를 같이** 끈다 = codex 자신의 파일 쓰기를 못 막는다.
+      //         실측하면 최악이 나온다 — **도구는 거의 안 붙고 안전만 잃는다.**
+      //
+      //   [답]  서버마다 `default_tools_approval_mode='approve'` (위 `승인()`).
+      //         "이 서버의 도구는 미리 승인된 것으로 친다"는 뜻이라 **셸·파일 샌드박스는 그대로 남는다.**
+      //
+      //   [실측]
+      //         · 내장 auxo   → `remember` 호출됨 (우리 DB tool_calls 흔적)
+      //         · 설치 MCP    → `sequential-thinking` 호출됨 (서버가 Thought 를 실제 출력)
+      //         · 홈 디렉터리에 파일 쓰기 → **막힘** = 샌드박스 살아 있음
+      //         ⚠️ 반드시 **게이트웨이(URL) 경로로** 시험할 것. stdio 직접 spawn 은 원래 안 붙어서
+      //            "자물쇠 때문에 안 된다"로 오판하게 된다.
+      //
+      //   [남는 것]  `workspace-write` 는 작업폴더(아래 빈 임시 폴더)와 /tmp 에는 쓸 수 있다.
+      //         그래서 아래 "빈 임시 폴더에서 실행"은 그대로 둔다 — 그게 작업폴더의 범위를 정한다.
+      args.push('-s', 'workspace-write');
     } else {
+      // 기억 처리 등 도구가 필요 없는 호출은 **자물쇠를 그대로 둔다**(claude 와 동일).
       args.push('-s', 'read-only');
     }
+    // ★**빈 임시 폴더에서 실행**. claude 와 동등하게(두뇌가 달라도 같은 기준).
+    //   cwd 를 안 정하거나 허용폴더로 두면 **codex 가 사용자 바탕화면 한가운데 서서** 돌게 된다.
+    //   그 상태로 "파일 뭐 있어?" 하면 그게 그대로 보인다.
+    //   ※ 쓰기 허용 범위는 cwd 가 아니라 writable_roots 가 정한다 — 빈 폴더로 옮겨도 허용폴더 쓰기는 그대로다.
+    codexCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'auxo-cx-'));
     let out = '', err = '';
+    // 검증용: 실제로 codex 에 넘기는 인자를 보고 싶을 때. `only` 면 찍고 실행하지 않는다(토큰 0).
+    //   ※ 이게 없어서 오늘 한참 헤맸다 — 인자가 맞는지 못 보고 codex 를 여러 번 헛되이 불렀다.
+    if (process.env.AUXO_CODEX_DUMP_ARGS) {
+      console.error('[codex args] cwd=' + codexCwd + '\n' + args.join(' '));
+      // ★반환 타입은 **평소와 같아야 한다.** 여기만 객체 `{text,tokens}` 를 돌려주는 바람에
+      //   호출부가 문자열로 알고 쓰다 `result.trim is not a function` 으로 죽었다
+      //   (compressRoutineRecent 요약이 조용히 실패 — 실측 2026-08-15).
+      //   검증용 갈래라도 **모양이 다르면 그 갈래에서만 나는 버그**가 생긴다.
+      if (process.env.AUXO_CODEX_DUMP_ARGS === 'only') return resolve('(dump only)');
+    }
     const proc = spawn('codex', args, { shell: true, windowsHide: true, cwd: codexCwd });
     // ⚠️ '총 시간'이 아니라 '무응답(idle)' 타임아웃 — 출력이 흐르는 동안엔 안 죽인다(무거운 생성 중간절단 방지, claude와 동일 원리).
     const IDLE_MS = opts.timeout || SUBSCRIPTION_TURN_TIMEOUT_MS;
@@ -152,12 +215,22 @@ function codexGenerate(systemPrompt, userPrompt, opts = {}) {
     proc.on('error', e => { clearTimeout(timer); reject(e); });
     proc.on('close', (code) => {
       clearTimeout(timer);
+      // 빈 임시 폴더 정리 — claude 와 동일(만들었으면 끝날 때 지운다). 실패해도 대화엔 영향 없음.
+      try { if (codexCwd) fs.rmSync(codexCwd, { recursive: true, force: true }); } catch (_) {}
       const text = extractResponse(out);
-      if (!text && code !== 0) return reject(new Error(`codex 종료(${code}): ${err.slice(0, 200)}`));
+      // ★이유를 **맨 앞**에 세운다. "codex 종료(N)" 이 앞서면 분류기가 원인을 못 짚는다.
+      if (!text && code !== 0) {
+        const re = extractStderrReason(err);
+        const e = new Error(re ? `${re} (codex 종료 ${code})` : `codex 종료(${code}): (원인 없음)`);
+        e.stderr = String(err || '').slice(0, 4000);
+        e.cliReason = re;
+        return reject(e);
+      }
       resolve(text || '(빈 응답)');
     });
     try { proc.stdin.write(fullPrompt); proc.stdin.end(); } catch (e) { clearTimeout(timer); reject(e); }
   });
 }
 
-module.exports = { codexGenerate, isAvailable, isLoggedIn, loginStatus, extractResponse };
+module.exports = { codexGenerate, isAvailable, isLoggedIn, loginStatus, extractResponse,
+  __extractStderrReason: extractStderrReason };

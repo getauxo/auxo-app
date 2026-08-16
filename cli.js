@@ -50,8 +50,6 @@ const BRAINS = [
   { mode: 'openai-compatible',  label: '기타(OpenAI 호환) — 키 + baseURL',            needsKey: true, needsBase: true },
   { mode: 'claude-subscription',label: 'Claude 구독 — 이 PC의 claude CLI',            needsKey: false },
   { mode: 'codex-subscription', label: 'Codex 구독 — 이 PC의 codex CLI (ChatGPT)',    needsKey: false },
-  // Antigravity: 2026-07-16 비활성화 — agy 는 프롬프트를 인자로만 받아(stdin 미지원) ~32,000자 한계.
-  // 대화 몫이 약 6,000 토큰뿐이라 기억 설계(최근 20,000 토큰 원문)를 못 담는다. 코드는 brain-antigravity.js 에 보존.
 ];
 function brainLabel(mode) { const b = BRAINS.find(x => x.mode === mode); return b ? b.label.split(' — ')[0] : mode; }
 
@@ -270,7 +268,7 @@ function startScheduler() {
     loadAgent: storage.loadAgent,
     loadAllAgents: storage.loadAllAgents,
     saveAgent: storage.saveAgent,
-    runTurn: (id, prompt) => engine.runTurn({ agentId: id, userMessage: prompt, emit: () => {} }),
+    runTurn: (id, prompt, 표시) => engine.runTurn({ agentId: id, userMessage: prompt, displayUserMessage: 표시, emit: () => {} }),
     deliver: async (ch, text, s) => {
       const isHb = s && s.kind === 'heartbeat'; // 하트비트(먼저 안부)는 '예약' 라벨 없이
       if (ch === 'telegram' && _botRunning) {
@@ -278,7 +276,12 @@ function startScheduler() {
       } else if (ch === 'discord' && _dcRunning) {
         await botDiscord.sendToOwner(isHb ? String(text) : `🔔 ${s.title}\n${text}`).catch(() => {});
       } else {
-        console.log('\n' + c.orange('● ') + c.b(isHb ? agent.name : `🔔 ${s.title}`));
+        // ★여기서 이 스코프에 없는 변수를 쓰면, 먼저 안부(하트비트)가 CLI 로 뜨는 순간
+        //   ReferenceError 로 터지고 tick 의 catch 가 그걸 삼킨다.
+        //   ※ 하트비트가 전역 OFF 라 당장은 안 터지지만 재도입하는 순간 터진다.
+        //     이름은 스케줄러가 실어 보낸다.
+        const 이름 = (s && s.agentName) || (storage.loadAgent(s && s.agentId) || {}).name || '에이전트';
+        console.log('\n' + c.orange('● ') + c.b(isHb ? 이름 : `🔔 ${s.title}`));
         console.log('  ' + String(text).split('\n').join('\n  '));
         process.stdout.write('\n' + c.cyan('  나') + '\n  › ');
       }
@@ -375,6 +378,59 @@ async function connectDiscord(agent) {
 }
 
 // ── 에이전트 생성 마법사 (어느 단계서든 /cancel 로 취소 → null 반환) ──────────
+/**
+ * 모델 고르기 — 키로 회사에 직접 물어본 목록에서 번호로 고른다.
+ * 반환: 모델 id / null(취소). ★기본값이 없으므로 **고를 때까지 안 넘어간다.**
+ * 앱(renderer/app.js 의 loadModels)과 같은 원리 — 목록 조회 성공 = 키가 유효하다는 뜻이라
+ * 키 확인을 겸한다.
+ */
+async function pickModelCli(brain, apiKey) {
+  // OpenAI 호환은 제공자가 제각각이라 목록 규격을 보장할 수 없다 → 직접 입력.
+  if (brain.mode === 'openai-compatible') {
+    while (true) {
+      const v = (await ask('  모델명 (제공자 문서 참고): ')).trim();
+      if (v === CANCEL) return null;
+      if (v) return v;
+      console.log(c.red('  모델명이 필요해요.'));
+    }
+  }
+  const 모듈 = { 'openai-api': './brain-openai', 'gemini-api': './brain-gemini', 'claude-api': './brain-anthropic' }[brain.mode];
+  if (!모듈) return '';
+  let list = [];
+  try {
+    process.stdout.write('  모델 목록을 불러오는 중…');
+    list = await require(모듈).listModels(apiKey);
+    console.log(c.dim(` ${list.length}개`));
+  } catch (e) {
+    console.log(c.red('\n  목록을 못 불러왔어요: ' + e.message));
+    console.log(c.dim('  키와 결제(크레딧) 상태를 확인해 주세요.'));
+    return null;
+  }
+  if (!list.length) { console.log(c.red('  쓸 수 있는 모델이 없어요.')); return null; }
+
+  let 보기 = list;
+  while (true) {
+    console.log();
+    보기.slice(0, 30).forEach((m, i) => {
+      // ★모델명만 — 컨텍스트 크기 같은 건 비개발자가 모른다(앱과 같은 규칙).
+      console.log('    ' + c.cyan(String(i + 1).padStart(2)) + ') ' + m.label);
+    });
+    if (보기.length > 30) console.log(c.dim(`    … 외 ${보기.length - 30}개 (검색어를 입력하면 좁혀져요)`));
+    const v = (await ask(`  번호 또는 검색어 (취소: ${CANCEL}): `)).trim();
+    if (v === CANCEL) return null;
+    const n = Number(v);
+    if (Number.isInteger(n) && n >= 1 && n <= Math.min(보기.length, 30)) return 보기[n - 1].id;
+    if (v) {
+      const q = v.toLowerCase();
+      const 좁힘 = list.filter((m) => (m.id + ' ' + m.label).toLowerCase().includes(q));
+      if (좁힘.length) { 보기 = 좁힘; continue; }
+      console.log(c.red('  그런 모델이 없어요.'));
+    } else {
+      console.log(c.red('  사용할 모델을 골라주세요. (기본값이 없어서 안 고르면 대화가 안 돼요)'));
+    }
+  }
+}
+
 async function createAgent() {
   console.log('\n  ' + c.b('── 새 에이전트 만들기 ──') + c.dim(`   (취소: ${CANCEL})`));
   let name = '';
@@ -411,10 +467,13 @@ async function createAgent() {
       apiKey = v;
     }
   }
-  {
-    const v = (await ask('  모델 (선택 — 비우면 기본값): ')).trim();
-    if (v === CANCEL) return null;
-    model = v;
+  // ── 모델 고르기 ────────────────────────────────────────────
+  // ★"비우면 기본값" 방식은 쓰지 않는다. 코드에 박아둔 기본 모델을
+  //   **제공사가 내리면 그 두뇌가 통째로 죽는다.** 기본값은 언젠가 반드시 죽는다.
+  //   → **회사에 직접 물어본 목록에서 고르게** 한다. 안 고르면 진행하지 않는다.
+  if (brain.needsKey) {
+    model = await pickModelCli(brain, apiKey);
+    if (model === null) return null; // 취소
   }
 
   const id = `agent-${Date.now()}`;
@@ -424,7 +483,8 @@ async function createAgent() {
     apiKeys: apiKey ? { [brain.mode]: apiKey } : {},
     models:  model  ? { [brain.mode]: model }  : {},
     speech: 'auto', userNickname: '',
-    humanFacts: [],
+    userMemory: '',   // 이 사람에 대한 기억(통짜 글)
+    refMemory: '',    // 첨부·문서에서 온 정보(본인 사실과 분리)
     work: { activeId: null, projects: [], routines: [] },
     createdAt: new Date().toISOString(),
   };
@@ -478,12 +538,20 @@ async function switchAgent(current) {
 
 function printFacts(agentId) {
   const a = storage.loadAgent(agentId);
-  const facts = (a && a.humanFacts) || [];
-  if (!facts.length) { console.log(c.dim('  (아직 기억 없음)')); return; }
-  console.log(c.b(`  ${a.name}이(가) 당신에 대해 아는 것 (${facts.length}개):`));
-  facts.forEach(f => console.log(`  · ${f.label}: ${f.value}`
-    + (f.importance ? c.dim(` [중요도 ${f.importance}]`) : '')
-    + (f.accessCount ? c.dim(` ·회상${f.accessCount}`) : '')));
+  if (!a) { console.log(c.dim('  (에이전트 없음)')); return; }
+  const um = require('./user-memory');
+  um.absorbLegacyFacts(a); // 옛 낱개 데이터가 남아 있으면 글로 풀어 보여준다(저장은 안 건드림)
+  const lines = um.toLines(a.userMemory);
+  const refs = um.toLines(a.refMemory);
+  if (!lines.length && !refs.length) { console.log(c.dim('  (아직 기억 없음)')); return; }
+  if (lines.length) {
+    console.log(c.b(`  ${a.name}이(가) 당신에 대해 아는 것 (${um.memorySize(a.userMemory)}자 / 그릇 ${um.limitOf(a)}자):`));
+    lines.forEach(l => console.log(`  · ${l}`));
+  }
+  if (refs.length) {
+    console.log(c.b(`\n  참고 자료에서 알게 된 것 (본인 사실 아님):`));
+    refs.forEach(l => console.log(`  · ${l}`));
+  }
 }
 
 // ── 대화 루프 ────────────────────────────────────────────────────────────
@@ -561,7 +629,7 @@ async function chatLoop(agent) {
     if (r.error) { console.log(c.red(`\n  [오류] ${r.error}`)); continue; }
     console.log('\n' + c.orange('● ') + c.b(agent.name));
     console.log('  ' + String(r.response).split('\n').join('\n  '));
-    // 정직 계층 ③: 도구 배지 상시표시 제거(마스터 결정). 근거는 물으면 on-demand 로.
+    // 정직 계층 ③: 도구 배지를 상시 표시하지 않는다. 근거는 물으면 on-demand 로.
 
     // 기억 정리는 사람처럼 조용히 — 표시 없이 백그라운드 처리.
     if (r.generate) {
@@ -575,13 +643,15 @@ async function chatLoop(agent) {
 
 // ── 진입 ────────────────────────────────────────────────────────────────
 async function main() {
-  storage.init(DATA_DIR);
+  storage.initOrExit(DATA_DIR);
   pasteModeOn();
   clear();
   banner();
 
   const agent = await selectOrCreate();
-  if (!agent) { console.log(c.dim('\n  안녕히 가세요, 마스터.')); rl.close(); return; }
+  // ★인사에 호칭을 기본값으로 박지 않는다.
+  //   호칭은 대화로 자연히 정해지는 것이지 억지로 붙이는 게 아니다.
+  if (!agent) { console.log(c.dim('\n  안녕히 가세요.')); rl.close(); return; }
 
   clear();
   banner();
@@ -591,8 +661,23 @@ async function main() {
   startScheduler(); // 예약된 정기 작업 자동 실행(매분 확인) — PC 켜진 동안
   await chatLoop(agent);
 
-  console.log(c.dim('\n  안녕히 가세요, 마스터. (대화·기억은 저장되었습니다)'));
+  console.log(c.dim('\n  안녕히 가세요. (대화·기억은 저장되었습니다)'));
+  cleanupChildren();
   rl.close();
 }
 
-main().catch(err => { console.error(c.red('치명적 오류:'), err); rl.close(); process.exit(1); });
+/**
+ * 띄워 둔 MCP 자식 프로세스를 정리한다. **없으면 CLI 가 안 죽는다.**
+ * 실측(2026-08-14): /exit 를 쳐도 `node auxo-mcp-tools.js` 가 남고, 그게 부모(cli.js)까지
+ * 붙잡아 15분 넘게 살아 있었다. 앱은 will-quit 에서 부르는데 CLI 에는 이 호출이 아예 없었다.
+ */
+function cleanupChildren() {
+  try { require('./mcp-gateway').shutdown(); } catch (_) {}
+}
+// 창을 닫거나 Ctrl+C 로 끝내도 자식이 남지 않게 — 정상 종료 경로만 막으면 반쪽이다.
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  try { process.on(sig, () => { cleanupChildren(); process.exit(0); }); } catch (_) {}
+}
+process.on('exit', cleanupChildren);
+
+main().catch(err => { console.error(c.red('치명적 오류:'), err); cleanupChildren(); rl.close(); process.exit(1); });

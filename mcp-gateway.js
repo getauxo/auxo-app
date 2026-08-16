@@ -34,6 +34,11 @@ async function _startGateway(agentId, server) {
     req.on('end', async () => {
       try {
         const parsed = body ? JSON.parse(body) : undefined;
+        // 진단용: 두뇌가 **실제로 붙어서 무엇을 요청했는지** 본다(토큰을 안 쓰고 연결을 확인한다).
+        //   "도구가 안 열려 있다"는 두뇌의 말이 연결 실패인지 두뇌가 안 부른 건지 이걸로 갈린다.
+        if (process.env.AUXO_GW_LOG) {
+          try { console.error(`[gw:${server.id}] ${new Date().toISOString().slice(11, 23)} ${req.method} ${parsed && parsed.method ? parsed.method : '(본문없음)'}`); } catch (_) {}
+        }
         const srv = new Server({ name: 'auxo-gw-' + server.id, version: '0.1.0' }, { capabilities: { tools: {} } });
         srv.setRequestHandler(ListToolsRequestSchema, async () => {
           // 실서버 도구를 그대로 노출(늦게 뜨는 도구 대비 재조회, 실패 시 최초 캐시).
@@ -96,10 +101,19 @@ async function ensureAuxoGateway(agentId, auxoServer) {
   return g.url;
 }
 
-/** 앱 종료 시 정리. */
+/**
+ * 앱·CLI 종료 시 정리.
+ *
+ * ★예전엔 httpServer 만 닫았다. 그런데 **자식 프로세스는 그쪽에 없다** —
+ *   실서버는 mcpManager.connect 가 stdio 로 띄우고, 여기 gateways 맵엔 { httpServer, port, url } 만 있다.
+ *   그래서 껍데기만 닫히고 `node auxo-mcp-tools.js` 는 계속 살아 있었다(실측 2026-08-14: 15분+).
+ *   남은 자식이 부모까지 붙잡아 CLI 가 아예 안 죽었고, 앱이었다면 **자동 업데이트가
+ *   '끌 때 설치'라 파일 잠금으로 실패**했을 자리다.
+ */
 function shutdown() {
   for (const g of gateways.values()) { try { g.httpServer.close(); } catch (_) {} }
   gateways.clear();
+  try { return require('./mcp-manager').disconnectAll(); } catch (_) { return 0; }
 }
 
 module.exports = { ensureGateways, ensureAuxoGateway, shutdown };

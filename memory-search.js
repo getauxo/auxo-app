@@ -12,7 +12,6 @@
  *
  * ⚠️ 관련성 판단은 여기서 하지 않는다. 점수로 "관련 없음"을 거르는 건 불가능하다는 게 실측 결론이다
  *   (near-miss: "어깨 수술"0.669 > 정답 0.571). 후보를 주면 **두뇌가 내용을 읽고 판단·정정**한다.
- *   근거 = memory/agentlink/memory-search-relevance-research.md
  */
 const storage = require('./storage');
 const embeddings = require('./embeddings');
@@ -37,8 +36,8 @@ function _epText(e) { return `${e.summary || ''} ${(e.entities || []).join(' ')}
 function _h(t) { return crypto.createHash('md5').update(String(t || '')).digest('hex').slice(0, 16); } // 메시지 텍스트 → 캐시 키
 /**
  * 그 메시지에 딸린 파일(경로) — 검색 결과에 함께 돌려준다.
- * ★2026-07-16: 사용자는 파일명을 정확히 모른다("아까 그 바우처"). 맥락으로 메시지를 찾아도 파일 경로를 안 주면
- *   에이전트가 파일을 되돌려줄 수 없다(실사고: 대화는 있는데 "받은 PDF가 없다"고 답함). 맥락 검색 + 파일 동반 반환.
+ * ★사용자는 파일명을 정확히 모른다("아까 그 바우처"). 맥락으로 메시지를 찾아도 파일 경로를 안 주면
+ *   에이전트가 파일을 되돌려줄 수 없다 — 대화는 있는데 "받은 PDF가 없다"고 답하게 된다. 맥락 검색 + 파일 동반 반환.
  */
 function _filesOf(m) {
   if (!Array.isArray(m.files) || !m.files.length) return undefined;
@@ -54,15 +53,21 @@ async function _semanticScores(embedder, query, items, textFn) {
   if (!items.length) return [];
   const qv = (await embedder.embed([query], 'query'))[0];
   if (!Array.isArray(qv) || !qv.length) throw new Error('query embed 실패');
-  const need = items.filter(it => !Array.isArray(it._emb) || it._embKey !== embedder.key);
+  // 캐시 키에 텍스트 지문을 포함한다 — 모델 키만 보면 내용이 바뀌어도 옛 벡터가 남는다.
+  const need = [];
+  const needSig = [];
+  for (const it of items) {
+    const sig = embeddings.embCacheKey(textFn(it), embedder.key);
+    if (!Array.isArray(it._emb) || it._embKey !== sig) { need.push(it); needSig.push(sig); }
+  }
   if (need.length) {
     const vecs = await embedder.embed(need.map(textFn));
-    need.forEach((it, i) => { if (Array.isArray(vecs[i]) && vecs[i].length) { it._emb = vecs[i]; it._embKey = embedder.key; } });
+    need.forEach((it, i) => { if (Array.isArray(vecs[i]) && vecs[i].length) { it._emb = vecs[i]; it._embKey = needSig[i]; } });
   }
   return items.map(it => ({ it, s: embeddings.cosine(qv, it._emb) }));
 }
 
-// ── 대화 의미검색 확장(2026-07-20): 벡터를 int8로 sqlite에 저장 + 프로세스 RAM 캐시 ──
+// ── 대화 의미검색: 벡터를 int8 로 sqlite 에 저장 + 프로세스 RAM 캐시 ──
 //   과거: 매 검색마다 거대 msgemb JSON 통째 로드 + 원문 전체 스캔 → 수십만 개서 느림.
 //   지금: 벡터저장소(msg_vec, int8 BLOB)만으로 점수+결과 구성, 프로세스 내 캐시로 재로드 회피.
 //   순위=cosine 그대로(정규화 후 int8 내적/127² ≈ cosine). 쿼리/문서 비대칭 임베딩 유지.
@@ -113,24 +118,26 @@ async function searchMemory(agentId, query, max = 8) {
   if (!toks.length) return { hits: [], note: '검색어가 비었어.' };
   const ag = storage.loadAgent(agentId) || {};
   const episodes = ag.episodes || [];
-  const facts = ag.humanFacts || [];
+
   const out = [];
 
-  // ⑤일화 + ④팩트: 의미검색(임베딩) 우선 — 동의어 포착. 실패 시 substring 폴백.
+  // ⑤일화: 의미검색(임베딩) 우선 — 동의어 포착. 실패 시 substring 폴백.
+  //
+  // ★**그릇(사용자에 대한 기억)은 검색 대상이 아니다.**
+  //   통짜 전환으로 그릇 전문이 매 턴 시스템 프롬프트에 통째로 들어간다 → 두뇌 눈앞에 이미 있다.
+  //   그걸 또 검색 결과로 돌려주면 같은 내용이 두 번 들어가고, 검색 자리(상한)를 잡아먹어
+  //   정작 필요한 일화·원문이 밀린다. 눈앞에 있는 걸 다시 찾아줄 이유가 없다.
   let semanticOK = false;
   const embedder = _safeEmbedder(ag);
   if (embedder) {
     try {
       for (const { it, s } of await _semanticScores(embedder, query, episodes, _epText))
         out.push({ kind: '일화', _ts: (it.date || it.ts), text: (it.summary || ''), score: s + 0.05 }); // 일화 소폭 가중
-      for (const { it, s } of await _semanticScores(embedder, query, facts, f => `${f.label}: ${f.value}`))
-        out.push({ kind: '기억', _ts: it.ts, text: `${it.label}: ${it.value}`, score: s });
       semanticOK = true;
     } catch (_) { out.length = 0; } // 임베딩 실패 → 아래 substring 폴백으로
   }
   if (!semanticOK) {
     for (const ep of episodes) { const sc = _score(_epText(ep), toks); if (sc > 0) out.push({ kind: '일화', _ts: (ep.date || ep.ts), text: (ep.summary || ''), score: sc / toks.length + 0.05 }); }
-    for (const f of facts) { const sc = _score(`${f.label}: ${f.value}`, toks); if (sc > 0) out.push({ kind: '기억', _ts: f.ts, text: `${f.label}: ${f.value}`, score: sc / toks.length }); }
   }
 
   // ②아카이브 + ①현재 대화 원문: 의미검색 = int8 벡터저장소(msg_vec) + 프로세스 RAM 캐시.
@@ -168,12 +175,17 @@ async function searchMemory(agentId, query, max = 8) {
   return {
     hits,
     note: hits.length
-      ? '이 중에서 확실한 것만 근거로 답하고, 애매하면 지어내지 말고 "정확힌 못 찾았다"고 해.'
+      // ★"여기 나온 건 지난 기록"이라고 못박는다. 이게 없으면 **옛 대화에 나온 일정을 '지금 걸린 알림'으로 답한다.**
+      //   실측(2026-08-15, GPT): "알림 뭐 있어?"에 list_schedules 대신 search_memory 를 부르고,
+      //   월세·정산·어머니 생신 같은 **없는 알림 6건을 목록으로** 내놨다(실제로는 1건). 사용자는 그걸 믿는다.
+      ? '이 중에서 확실한 것만 근거로 답하고, 애매하면 지어내지 말고 "정확힌 못 찾았다"고 해. '
+        + '★여기 나온 건 **지난 대화·기억 기록**이야 — 지금 실제로 걸려 있는 예약·알림이 아니다. '
+        + '"지금 걸린 알림/예약"을 물으면 이 결과로 답하지 말고 **list_schedules 를 불러서** 답해.'
         + (hits.some(h => h.files) ? ' 결과의 files(파일 경로)는 그때 주고받은 실제 파일이야 — send_file/read_file 에 그 경로를 그대로 쓰면 사용자에게 다시 보내거나 열어볼 수 있어. "파일이 없다"고 하지 마.' : '')
       : '저장된 기억·대화·아카이브에서 못 찾았어. 지어내지 말고 솔직히 "기록에 없다"고 해.',
   };
 }
 
-// ★2026-07-17: relevantEpisodes(일화 자동 주입) 제거 — 창이 20,000토큰이 되어 원문이 통째로 들어가므로 중복.
+// ★relevantEpisodes(일화 자동 주입)는 두지 않는다 — 창에 원문이 통째로 들어가므로 중복이다.
 //   근거 없던 임계값 0.75와 매 턴 일화 임베딩 비용도 함께 사라짐. 일화 '저장'(storage.addEpisodes)은 유지.
 module.exports = { searchMemory };

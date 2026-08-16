@@ -206,7 +206,7 @@ async function main() {
   const cfg = loadConfig();
   if (!cfg.token) { console.error('❌ 디스코드 봇 토큰이 없어요. discord-bot.json 의 token 또는 AUXO_DISCORD_TOKEN 을 설정해 주세요.'); process.exit(1); }
   if (!cfg.dataPath || !cfg.agentId) { console.error('❌ 연결할 에이전트가 없어요. dataPath 와 agentId 를 설정해 주세요.'); process.exit(1); }
-  storage.init(cfg.dataPath);
+  storage.initOrExit(cfg.dataPath);
   const agent = storage.loadAgent(cfg.agentId);
   if (!agent) { console.error('❌ 에이전트를 찾을 수 없어요: ' + cfg.agentId); process.exit(1); }
   const me = await verifyToken(cfg.token);

@@ -199,7 +199,19 @@ async function startBot(cfg, opts = {}) {
       }
       if (!userMessage && !(attachments && attachments.length)) continue; // 텍스트도 파일도 없음
 
-      tgPost(cfg.token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+      // ★"입력 중" 표시를 **응답이 끝날 때까지 유지**한다.
+      //   텔레그램의 chat action 은 **5초만** 살아 있다(공식 규격). 그런데 우리는 턴 시작에
+      //   딱 한 번만 보내고 있었다. 실측: 응답이 **14~24초** 걸리므로 5초 뒤 표시가 사라지고
+      //   나머지 10~20초는 **아무 표시 없이 조용**했다 — 사용자는 답이 오는지 모른 채 기다린다.
+      //   (없으면 사용자는 *"작성중 같은 게 안 뜬다"*고 느낀다)
+      //   → 4초마다 다시 보내 끊기지 않게 한다. 파일 전송 중엔 그쪽 action 이 따로 나간다.
+      const 타이핑유지 = (() => {
+        const tick = () => tgPost(cfg.token, 'sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => {});
+        tick();
+        const id = setInterval(tick, 4000);
+        if (id.unref) id.unref();          // 이 타이머 때문에 프로세스가 안 죽는 일 없게
+        return () => clearInterval(id);
+      })();
       let r;
       try {
         r = await engine.runTurn({
@@ -213,7 +225,9 @@ async function startBot(cfg, opts = {}) {
         });
       }
       catch (e) { await send(cfg.token, chatId, '잠시 문제가 있었어요. 다시 한번 말씀해 주실래요?'); continue; }
-      const body = r.response || r.error || '...'; await send(cfg.token, chatId, body); // 정직 계층 ③: 도구 배지 상시표시 제거(마스터 결정)
+      finally { 타이핑유지(); }   // ★성공·실패·예외 어느 쪽이든 반드시 멈춘다(타이머가 남으면 계속 "입력 중")
+                                  //   (catch 의 continue 보다 finally 가 먼저 돈다 — 여기 한 곳이면 충분)
+      const body = r.response || r.error || '...'; await send(cfg.token, chatId, body); // 정직 계층 ③: 도구 배지를 상시 표시하지 않는다
       // 앱이 켜져 있으면 그 대화를 앱 채팅창에도 실시간 반영(같은 프로세스, "통합 홈")
       if (opts.onExchange) { try { opts.onExchange({ agentId: cfg.agentId, userMessage, response: body }); } catch (_) {} }
       if (r.generate) {
@@ -228,7 +242,7 @@ async function main() {
   const cfg = loadConfig();
   if (!cfg.token) { console.error('❌ 텔레그램 봇 토큰이 없어요. telegram-bot.json 의 token 또는 AUXO_BOT_TOKEN 을 설정해 주세요.'); process.exit(1); }
   if (!cfg.dataPath || !cfg.agentId) { console.error('❌ 연결할 에이전트가 없어요. dataPath 와 agentId 를 설정해 주세요.'); process.exit(1); }
-  storage.init(cfg.dataPath);
+  storage.initOrExit(cfg.dataPath);
   const agent = storage.loadAgent(cfg.agentId);
   if (!agent) { console.error('❌ 에이전트를 찾을 수 없어요: ' + cfg.agentId); process.exit(1); }
   const me = await verifyToken(cfg.token);

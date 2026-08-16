@@ -6,9 +6,9 @@
  */
 
 module.exports = {
-  // 구독 CLI 두뇌(claude·codex·antigravity)의 대화 응답 타임아웃(ms).
+  // 구독 CLI 두뇌(claude·codex)의 대화 응답 타임아웃(ms).
   // thinking+MCP 왕복이 있는 무거운 턴의 상한. 그 이상은 대개 hang이라 실패시키는 게 UX상 낫다.
-  // (2026-07-13: claude 구독 60초가 too tight → SIGTERM 로그로 확증 → 240초로 상향·3종 동등화)
+  // (구독 CLI 는 60초로는 부족하다 — SIGTERM 로그로 확증. 3종을 같은 값으로 맞춘다)
   // 기억 처리(extract·consolidate 등)는 각 호출부가 opts.timeout으로 따로 지정한다.
   SUBSCRIPTION_TURN_TIMEOUT_MS: 240000,
 };

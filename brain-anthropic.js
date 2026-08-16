@@ -4,7 +4,7 @@
  * Anthropic Messages API(POST /v1/messages)를 직접 호출한다(raw HTTP).
  * - claude CLI 구독과 달리 순수 API라 CLAUDE.md·도구 누수 구조적 불가(brain-claude.js의 구독 경로와 별개).
  * - API 키: 환경변수 ANTHROPIC_API_KEY 우선, 없으면 같은 폴더 `anthropic-api-key` 파일. opts.apiKey가 최우선.
- * - 모델: opts.model > env ANTHROPIC_MODEL > 파일 `anthropic-model` > DEFAULT_MODEL.
+ * - 모델: opts.model > env ANTHROPIC_MODEL > 파일 `anthropic-model`. **기본값 없음** — 사용자가 목록에서 고른다.
  *
  * 인터페이스는 brain-gemini와 동일 시그니처(능력 평행):
  *   anthropicGenerate(systemPrompt, userPrompt, opts) -> Promise<string>
@@ -18,10 +18,14 @@ const path = require('path');
 const localTools = require('./tools'); // keyless 로컬 도구(시간·계산·fetch)
 // L2: 대용량 도구출력 요약 헬퍼 (brain-claude에서 공유)
 const { summarizeToolResult } = require('./brain-claude');
+const toolDecls = require('./tool-decls');   // 라운드 가드(꺼내기와 쓰기 분리)
 
 const ANTHROPIC_ENDPOINT = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
-const DEFAULT_MODEL = 'claude-sonnet-5'; // 최신 Sonnet(가성비 균형·동반자용). ⚠️Anthropic은 -latest 별칭 없음 → 새 세대 나오면 수동 갱신. 설정서 claude-opus-4-8 등으로 변경 가능.
+// ★기본 모델을 두지 않는다 — 상세 근거는 brain-openai.js 같은 자리에.
+//   요지: 기본값은 언젠가 반드시 죽고(OpenAI 에서 실제로 겪음), 별칭은 안 죽는 대신 뭘 얼마에 쓰는지 감춘다.
+//   → 사용자가 목록에서 직접 고른다. 못 고르면 진행을 막는다.
+const MODELS_ENDPOINT = 'https://api.anthropic.com/v1/models?limit=100';
 const DEFAULT_MAX_TOKENS = 4096;
 const MAX_TOOL_ROUNDS = 6; // function-calling 최대 왕복(무한루프 방지)
 const WEB_SEARCH_TOOL = { type: 'web_search_20260209', name: 'web_search', max_uses: 5 }; // 네이티브 서버 도구
@@ -42,10 +46,29 @@ function getApiKey() {
   return _readFile('anthropic-api-key');
 }
 
-/** 모델명: env > 파일 > 기본 */
+/** 모델명: env > 파일. **기본값 없음** — 못 찾으면 빈 문자열(호출부가 막는다). */
 function getModel() {
   if (process.env.ANTHROPIC_MODEL && process.env.ANTHROPIC_MODEL.trim()) return process.env.ANTHROPIC_MODEL.trim();
-  return _readFile('anthropic-model') || DEFAULT_MODEL;
+  return _readFile('anthropic-model') || '';
+}
+
+/**
+ * 이 키로 지금 쓸 수 있는 모델 목록. 반환 형식은 세 두뇌 공통 — [{ id, label, hint }].
+ * Anthropic 은 셋 중 정보가 가장 풍부하다 — display_name(사람이 읽는 이름)·created_at·max_input_tokens.
+ * 목록 전체가 대화용이라 따로 거를 게 없다.
+ */
+async function listModels(apiKey) {
+  const key = apiKey || getApiKey();
+  if (!key) throw new Error('ANTHROPIC_API_KEY 없음');
+  const res = await fetch(MODELS_ENDPOINT, {
+    headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+  });
+  if (!res.ok) throw new Error(`모델 목록 조회 실패 (HTTP ${res.status})`);
+  const json = await res.json();
+  return (json.data || []).map((m) => {
+    const 만 = m.max_input_tokens ? `${Math.round(m.max_input_tokens / 10000) / 100}M 담김` : '';
+    return { id: m.id, label: m.display_name || m.id, hint: 만 };
+  });
 }
 
 /** 저수준 POST. Message 객체 반환. 실패 시 throw. */
@@ -167,6 +190,8 @@ async function anthropicGenerate(systemPrompt, userPrompt, opts = {}) {
   const key = opts.apiKey || getApiKey();
   if (!key) throw new Error('ANTHROPIC_API_KEY 없음 (env ANTHROPIC_API_KEY 또는 anthropic-api-key 파일에 넣어주세요)');
   const model = opts.model || getModel();
+  // ★기본값이 없다 — 안 고르고 온 건 설정이 덜 된 것이다(근거는 brain-openai.js 같은 자리).
+  if (!model) throw new Error('MODEL_NOT_SET: 쓸 모델을 아직 안 골랐어요. 설정에서 모델을 골라주세요.');
   const maxTokens = opts.maxTokens || DEFAULT_MAX_TOKENS;
   const system = (systemPrompt && systemPrompt.trim()) ? systemPrompt : undefined;
 
@@ -187,6 +212,8 @@ async function anthropicGenerate(systemPrompt, userPrompt, opts = {}) {
   // ── function-calling 루프 모드 ─────────────────────────────
   const extraDecls = Array.isArray(opts.extraDecls) ? opts.extraDecls : [];
   const extraExecute = typeof opts.extraExecute === 'function' ? opts.extraExecute : null;
+  // ★도구를 부르면서 같이 보낸 말을 버리지 않는다 — 버리면 마지막 라운드가 빌 수 있다(gemini 실측).
+  let 라운드말 = '';
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     // 매 라운드 재구성 — install_mcp가 같은 턴에 새 도구를 extraDecls에 밀어넣으면 즉시 보이게.
     const tools = [...localTools.DECLS, ...extraDecls].map(_toAnthropicTool);
@@ -217,11 +244,20 @@ async function anthropicGenerate(systemPrompt, userPrompt, opts = {}) {
     }
     // 우리(클라이언트) 함수 호출 처리
     if (msg.stop_reason === 'tool_use') {
+      { const t = _text(msg); if (t && !라운드말.includes(t)) 라운드말 = 라운드말 ? `${라운드말}\n${t}` : t; }
       messages.push({ role: 'assistant', content: msg.content }); // 함수호출 포함 전체 에코
       const toolUses = (msg.content || []).filter(b => b.type === 'tool_use');
       const results = [];
+      // 한 라운드에 "꺼내기"와 "쓰기"가 같이 오면, 설명을 못 본 채 인자를 지어낸다 → 막고 다시 부르게 한다.
+      const 라운드가드 = toolDecls.newRoundGuard();
       for (const call of toolUses) {
         let result;
+        if (라운드가드.blocked(call.name)) {
+          result = 라운드가드.message(call.name);
+          console.log(`[brain-anthropic:tool] ${call.name} — 방금 꺼낸 도구라 이번 라운드에선 실행하지 않음`);
+          results.push({ type: 'tool_result', tool_use_id: call.id, content: JSON.stringify(result) });
+          continue;
+        }
         try {
           if (extraExecute) {
             const r = await extraExecute(call.name, call.input || {});
@@ -230,6 +266,7 @@ async function anthropicGenerate(systemPrompt, userPrompt, opts = {}) {
             result = await localTools.execute(call.name, call.input || {});
           }
         } catch (e) { result = { error: String(e.message || e) }; }
+        라운드가드.note(call.name, result);   // load_tools 로 꺼낸 것들을 이번 라운드 동안 잠근다
         console.log(`[brain-anthropic:tool] ${call.name}(${JSON.stringify(call.input || {})}) → ok`);
         // L2: 대용량 도구출력 요약 — TOOL_RESULT_MAX 초과 시만 LLM 요약 (작은 결과는 비용 0)
         const rawContent = typeof result === 'string' ? result : JSON.stringify(result);
@@ -249,7 +286,12 @@ async function anthropicGenerate(systemPrompt, userPrompt, opts = {}) {
     // 종료(end_turn / max_tokens / refusal …)
     if (msg.stop_reason === 'refusal') return '미안해요, 그 요청은 도와드리기 어려워요.';
     const text = _text(msg);
-    return text || '음... 지금 제대로 답을 못 드리겠네요. 다시 한번 말씀해 주시겠어요?';
+    if (text) return text;
+    if (라운드말) return 라운드말;   // 도구를 부르며 이미 답을 말해 뒀다(gemini 쪽 같은 자리의 실측 참고)
+    // ★빈 응답 — 이유를 버리지 않는다(gemini 쪽 같은 자리의 주석 참고).
+    //   stop_reason 을 알고 있으면서 "다시 한번 말씀해 주시겠어요?"로 덮으면,
+    //   사용자는 자기 탓인 줄 알고 같은 말을 되풀이하고 우리는 원인을 못 본다.
+    throw new Error(`Claude 텍스트 없음 (stop_reason=${msg.stop_reason || '?'})`);
   }
   // 라운드 소진 → 도구 없이 마지막 정리
   const body = { model, max_tokens: maxTokens, messages };
@@ -273,5 +315,5 @@ module.exports = {
   askAnthropic,
   getApiKey,
   getModel,
-  DEFAULT_MODEL,
+  listModels,
 };

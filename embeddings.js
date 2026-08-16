@@ -37,7 +37,10 @@ async function _fetchJson(url, opts, timeoutMs) {
  * @returns {{ key: string, embed: (texts:string[]) => Promise<number[][]> } | null}
  */
 function getEmbedder(agent) {
-  const key = agent && agent.apiKey;
+  // ★두뇌별 키 보관함을 먼저 본다. 예전엔 옛 단일키(agent.apiKey)만 봐서,
+  //   키가 apiKeys 에만 있는 사용자는 **임베딩이 조용히 꺼졌다** — 기억 검색 품질이 떨어지는데
+  //   화면엔 아무 표시도 안 난다. (단일키는 옛 데이터 호환으로만 남겨 둔다.)
+  const key = agent && ((agent.apiKeys && agent.apiKeys[agent.brainMode]) || agent.apiKey);
   if (key && agent.brainMode === 'gemini-api') {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}:embedContent`;
     return {
@@ -74,7 +77,7 @@ function getEmbedder(agent) {
       },
     };
   }
-  // 구독형(claude/codex/antigravity)·claude-api·키없음 등 API 임베딩 불가 → 로컬 임베딩으로 의미검색 제공
+  // 구독형(claude/codex)·claude-api·키없음 등 API 임베딩 불가 → 로컬 임베딩으로 의미검색 제공
   // (키·서버 불필요·오프라인·비용0). 모델 로드/다운로드 실패 시 호출부(engine) try/catch가 키워드로 폴백.
   return _getLocalEmbedder();
 }
@@ -82,7 +85,7 @@ function getEmbedder(agent) {
 // 로컬 임베딩(키·서버 불필요) — 구독형 두뇌 등 API 임베딩이 없는 경우의 의미검색 제공.
 // transformers.js는 ESM이라 CommonJS에서 dynamic import. 파이프라인은 1회 로드 후 재사용(lazy 싱글톤).
 //
-// ★2026-07-17 모델 교체: multilingual-e5-base → EmbeddingGemma-300m (실측 근거)
+// ★임베딩 모델 = EmbeddingGemma-300m (실측 근거)
 //  | 항목            | e5-base    | EmbeddingGemma |
 //  |-----------------|------------|----------------|
 //  | 한국어 동의어    | 4/4        | 4/4            |
@@ -101,7 +104,7 @@ let _localPipePromise = null;
 
 // ── 로컬 임베딩 오프로드 ────────────────────────────────────────────────────
 // onnxruntime 계산(모델 로드+추론)이 메인/CLI 이벤트루프를 막아 UI가 "(응답 없음)"이 되던
-// 문제(2026-07-27 노트북 실측: 메인 스레드 최대 7.8초 정지) 해결. 계산을 워커 스레드에서 돌려
+// 메인 스레드에서 돌리면 저사양 PC 에서 수 초씩 화면이 멎는다(실측). 계산을 워커 스레드에서 돌려
 // 메인 스레드는 항상 자유롭게 둔다. 워커 불가 환경은 과거 방식(인프로세스)으로 자동 폴백.
 let _embWorker = null, _embWorkerBroken = false, _embReqId = 0;
 const _embPending = new Map();
@@ -195,85 +198,22 @@ function cosine(a, b) {
   return dot / (Math.sqrt(na) * Math.sqrt(nb));
 }
 
-/** fact → 임베딩 대상 텍스트 */
-function _factText(f) { return `${f.label || ''}: ${f.value || ''}`.trim(); }
 
 /**
- * 의미 검색으로 관련 기억 선별 (Phase 2: activationScore 골격 공유).
- * - fact 벡터 캐시(없거나 키 불일치면 재생성), 쿼리 벡터 1회.
- * - 중요도 높은(>=3) 기억은 점수와 무관하게 항상 포함(핵심 보존).
- * - Phase 2: cosine을 relevance 항으로 activationScore에 넘겨 통일 골격 사용.
- * @returns {{ selected:Array, recalled:boolean, total:number, changed:boolean, qEmb:number[]|null }}
- *   changed=true면 fact._emb 캐시가 갱신됨 → 호출부가 저장 권장.
- *   qEmb: 쿼리 임베딩 벡터 (reinforce 및 키워드판과 일관성 위해 반환)
+ * 임베딩 캐시 키 = 모델 키 + 그 텍스트의 지문.
+ *
+ * 모델 키만 비교하면 기억의 값이 바뀌어도(정리·갱신·병합)
+ *   옛 벡터가 그대로 남았다 — 검색이 "지금은 없는 옛 내용"으로 걸려 엉뚱한 기억을 물어온다.
+ *   텍스트가 바뀌면 키도 바뀌어 자동으로 다시 계산된다.
+ *   (기존 사용자는 옛 형식 키와 불일치 → 최초 1회 전량 재계산. 로컬 모델이라 비용 없음.)
  */
-async function selectRelevant(facts, query, embedder, topK = 12, textFn = _factText) {
-  const total = facts.length;
-  let changed = false;
-
-  // 1) 캐시 없는/키 다른 fact만 배치 임베딩
-  const need = [];
-  for (const f of facts) {
-    if (!Array.isArray(f._emb) || f._embKey !== embedder.key) need.push(f);
-  }
-  if (need.length > 0) {
-    const vecs = await embedder.embed(need.map(textFn));
-    for (let i = 0; i < need.length; i++) {
-      if (Array.isArray(vecs[i]) && vecs[i].length) { need[i]._emb = vecs[i]; need[i]._embKey = embedder.key; changed = true; }
-    }
-  }
-
-  // 2) 쿼리 임베딩
-  const qv = (await embedder.embed([query], 'query'))[0];
-  if (!Array.isArray(qv) || !qv.length) {
-    // 쿼리 임베딩 실패 → 폴백 신호(빈 selected 대신 전량 반환은 호출부가 키워드로)
-    return { selected: facts, recalled: false, total, changed, qEmb: null };
-  }
-
-  // 3) Phase 2: activationScore 골격으로 점수 계산 (brain-claude.js의 activationScore와 동일 구조)
-  // embeddings.js는 brain-claude.js를 require할 수 없으므로(순환 의존) 동일 계산을 인라인.
-  // 상수는 brain-claude.js와 동기화 (W_REL=.45 W_REC=.15 W_FREQ=.10 W_IMP=.15 W_STR=.05)
-  const W_REL = 0.45, W_REC = 0.15, W_FREQ = 0.10, W_IMP = 0.15, W_STR = 0.05;
-  const TAU_R = 14, C_MAX = 50;
-  const nowMs = Date.now();
-
-  const scored = facts.map((f, i) => {
-    // relevance: cosine (임베딩판이므로 항상 cosine)
-    const relevance = cosine(qv, f._emb);
-
-    // recency
-    const lastAccMs = f.lastAccessed ? Date.parse(f.lastAccessed) : (f.ts ? Date.parse(f.ts) : nowMs);
-    const dtDays = Math.max(0, (nowMs - (isNaN(lastAccMs) ? nowMs : lastAccMs)) / (1000 * 60 * 60 * 24));
-    const recency = Math.exp(-dtDays / TAU_R);
-
-    // frequency
-    const cnt = Math.max(0, Number(f.accessCount) || 0);
-    const frequency = Math.log(1 + cnt) / Math.log(1 + C_MAX);
-
-    // importanceN
-    const imp = Math.max(1, Math.min(3, Number(f.importance) || 2));
-    const importanceN = (imp - 1) / 2;
-
-    // strength
-    const strength = Math.max(0, Math.min(1, Number(f.strength) || 0.5));
-
-    const score = W_REL * relevance + W_REC * recency + W_FREQ * frequency
-                + W_IMP * importanceN + W_STR * strength;
-
-    return { f, i, imp, score };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-
-  // 4) 선별: top-K + 핵심(imp≥3) 항상 포함
-  const picked = new Map();
-  for (const { f } of scored.slice(0, topK)) picked.set(f, true);
-  for (const f of facts) {
-    if (Number(f.importance) >= 3) picked.set(f, true);
-  }
-  const selected = facts.filter(f => picked.has(f));
-  return { selected, recalled: true, total, changed, qEmb: qv };
+function embCacheKey(text, embedderKey) {
+  const s = String(text || '');
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (((h << 5) + h) ^ s.charCodeAt(i)) >>> 0;
+  return `${embedderKey}|${s.length}|${h.toString(36)}`;
 }
+
 
 // 워밍업: 로컬 임베딩 모델을 미리(백그라운드) 로딩해 첫 대화 때의 1회성 지연을 없앤다.
 // 로컬 임베더일 때만 동작(API 임베더는 불필요한 호출 방지). 실패는 조용히 무시(다음 사용 시 재시도).
@@ -286,4 +226,5 @@ async function warm(agent) {
   } catch (_) {}
 }
 
-module.exports = { getEmbedder, selectRelevant, cosine, warm };
+module.exports = { getEmbedder, cosine, warm, embCacheKey };
+// selectRelevant(관련성으로 기억 골라내기)는 두지 않는다 — 그릇을 통째로 주입하기 때문이다.

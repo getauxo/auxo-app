@@ -6,9 +6,9 @@
  * Node 안에서 디코딩까지 직접 한다: ogg/opus = ogg-opus-decoder(WASM), wav = 직접 파싱.
  * 그다음 16kHz 로 리샘플해 로컬 Whisper(small)로 전사한다.
  *
- * 모델 정책(2026-07-19): 번들하지 않고 **첫 음성 때 자동 다운로드**(on-demand).
+ * 모델 정책: 번들하지 않고 **첫 음성 때 자동 다운로드**(on-demand).
  *   - 근거: 두뇌가 전부 클라우드라 대화 자체가 이미 온라인 → "첫 음성에 모델 받기"는 오프라인 배신 아님.
- *   - 성능 낮은 base를 기본으로 둘 이유 없이 처음부터 small(정확)로 간다(마스터 결정).
+ *   - 성능 낮은 base 를 기본으로 둘 이유가 없어 처음부터 small(정확)로 간다.
  *   - 저장 위치 = userData/models (설치본 app 폴더는 읽기전용). setUserModelsDir 로 주입.
  * 지원 포맷: OGG/Opus(텔레그램·디스코드 voice), WAV. mp3/m4a/영상은 ffmpeg 경유(별도).
  */

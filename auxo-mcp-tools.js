@@ -15,6 +15,7 @@ const path = require('path');
 const fs = require('fs');
 const storage = require('./storage');
 const memoryTools = require('./memory-tools');
+const userMemory = require('./user-memory'); // 그릇(통짜) 편집 — 루틴 리듬 등 직접 추가 경로
 const subagents = require('./subagents');
 const skillsRegistry = require('./skills-registry');
 const mcpManager = require('./mcp-manager');
@@ -38,93 +39,45 @@ function pickSubGen(agent) {
 }
 
 // delegate 도구 선언(engine 의 것과 동일 취지). MCP 서버는 턴 개념이 없어 한 호출당 5명 cap 만 적용.
-const DELEGATE_DECL = {
-  name: 'delegate_to_workers',
-  description: '규모가 크거나 여러 갈래로 나눌 수 있는 작업을, 여러 임시 일꾼에게 나눠 동시에 처리시킨다. '
-    + '각 일꾼은 독립적으로 한 부분을 맡아 결과를 돌려준다(한 번에 최대 5명, 너와 같은 두뇌). '
-    + '사용자가 "각각/나눠서/동시에/여러 개를" 처리해 달라고 하면 그 항목들을 한 번에 tasks 에 담아 위임해. '
-    + '일부만 위임하고 나머지는 직접 답하지 마 — 위임하기로 했으면 해당 항목 전부를 tasks 에 넣어. '
-    + '일꾼은 너의 기억·도구를 쓰지 못하니 각 작업을 자세하고 독립적으로 적어줘. 결과가 오면 네가 종합해서 답해.',
-  parameters: { type: 'object', properties: {
-    tasks: { type: 'array', items: { type: 'string' }, description: '각 일꾼에게 맡길 작업 설명 배열(최대 5개). 각 항목은 독립적으로 처리 가능해야 함.' },
-  }, required: ['tasks'] },
-};
+// ── 도구 선언 — 원본은 tool-decls.js 한 곳. 여기선 이름만 고르고 MCP 형식으로 바꾼다. ──
+//   여기에 설명문 사본을 두면 REST 쪽과 갈라진다(실제로 수십 개가 어긋난 적이 있다).
+//   (remember 의 "끝점" 기준, forget 의 확인 절차가 구독 쪽에만 있는 식) → 원본 일원화.
+const toolDecls = require('./tool-decls');
+
+const DELEGATE_DECL = toolDecls.byName.get('delegate_to_workers');
 
 // P0-a: 구독 두뇌(claude/codex)에도 노출하는 "읽기 전용" 공통 도구.
-// 검색·조회뿐이라 실제 변경이 없어 승인 게이트가 없어도 안전. (쓰기/설치는 P0-b 승인모델과 함께)
-const READ_DECLS = [
-  { name: 'find_mcp', description: '필요한 능력(브라우저 자동화·파일·메모리 등)의 MCP 도구를 신뢰 카탈로그에서 검색한다(읽기 전용). 설치는 사용자 승인이 필요해 별도다.',
-    inputSchema: { type: 'object', properties: { need: { type: 'string', description: '필요한 능력/작업 키워드' } }, required: ['need'] } },
-  { name: 'find_skill', description: '필요한 능력이 설치된 스킬에 없을 때, 신뢰 카탈로그에서 새 스킬 후보를 검색한다(읽기 전용).',
-    inputSchema: { type: 'object', properties: { need: { type: 'string', description: '필요한 능력/작업 키워드' } }, required: ['need'] } },
-  { name: 'use_skill', description: '이미 설치된 스킬의 전체 사용법을 펼쳐 읽는다(읽기 전용).',
-    inputSchema: { type: 'object', properties: { name: { type: 'string', description: '스킬 이름 또는 id' } }, required: ['name'] } },
-  { name: 'search_memory', description: '예전 대화·기억·아카이브를 검색한다(읽기 전용). 사용자가 "저번에/그때/지난주에 ~한 거", "그 식당·그거 뭐였지"처럼 지금 대화창에 없는 과거를 물으면 지어내지 말고 먼저 이걸로 찾아봐. 없으면 솔직히 "기록에 없다"고 해.',
-    inputSchema: { type: 'object', properties: { query: { type: 'string', description: '찾을 핵심 키워드' } }, required: ['query'] } },
-  { name: 'install_mcp', description: 'MCP 도구(서버)를 설치한다. find_mcp 후보의 id로. 필요한 입력(params, 예: 폴더 경로)이 있으면 함께. 사용자에게 확인받은 뒤 호출.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' }, params: { type: 'object' } }, required: ['id'] } },
-  { name: 'install_skill', description: '스킬을 설치한다. find_skill 후보의 id로. 사용자 확인 후.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
-  { name: 'install_skill_web', description: '카탈로그·레지스트리에도 없을 때, 웹에서 찾은 공개 스킬(GitHub SKILL.md 링크)을 설치한다. web_search로 찾은 출처(URL)를 사용자에게 보여주고 승인받은 뒤 호출. 보안 검수(패턴+AI 판정) 통과해야 설치되고 위험하면 자동 차단. GitHub raw/blob 링크만.',
-    inputSchema: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
-  { name: 'web_search', description: '인터넷을 검색해 관련 페이지(제목·링크·요약)를 찾는다(읽기 전용). 실시간 정보·최신 사실을 알아볼 때.',
-    inputSchema: { type: 'object', properties: { query: { type: 'string' }, max: { type: 'number' } }, required: ['query'] } },
-  { name: 'schedule_task', description: '특정 시각 한 번(리마인더, kind=once) 또는 반복(매일/매시/N분마다) 자동 실행할 일을 등록한다. "11시 41분에 알려줘"는 once, at="11:41". PC 켜진 동안 실행돼 결과를 전한다. 실제 등록됐을 때만(scheduled:true) "예약했다"고 답해 — 지어내지 마. channel 미지정 시 앱으로.',
-    inputSchema: { type: 'object', properties: { title: { type: 'string' }, kind: { type: 'string', enum: ['once', 'daily', 'hourly', 'interval'] }, at: { type: 'string', description: 'once/daily일 때 HH:MM (예: 11:41)' }, everyMin: { type: 'number' }, prompt: { type: 'string' }, channel: { type: 'string', enum: ['telegram', 'app', 'cli'] } }, required: ['title', 'kind', 'prompt'] } },
-  { name: 'list_schedules', description: '등록된 정기 작업 목록을 본다.', inputSchema: { type: 'object', properties: {}, required: [] } },
-  { name: 'cancel_schedule', description: '등록된 정기 작업을 취소한다(id 또는 제목).', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
-  { name: 'create_skill', description: '재사용 가능한 방법·절차를 "스킬"로 저장한다(자가학습). 어려운 작업을 잘 해냈고 또 쓸 것 같을 때, 또는 사용자가 "방법 기억해둬"라고 할 때. 사소한 건 만들지 마.',
-    inputSchema: { type: 'object', properties: { name: { type: 'string' }, description: { type: 'string' }, body: { type: 'string' } }, required: ['name', 'body'] } },
-  { name: 'set_heartbeat', description: '"먼저 안부 묻기(하트비트)" 설정 변경(아침·저녁 하루 2번 먼저 안부). "그만"→enabled=false, "다시 챙겨줘"→true, 시간 변경=morning/evening.',
-    inputSchema: { type: 'object', properties: { enabled: { type: 'boolean' }, morning: { type: 'string' }, evening: { type: 'string' } } } },
-];
+const READ_DECLS = toolDecls.toMcp(toolDecls.pick([
+  'find_mcp', 'install_mcp', 'remove_mcp', 'find_skill', 'install_skill', 'install_skill_web',
+  'uninstall_skill', 'use_skill', 'create_skill', 'search_memory', 'web_search',
+  'schedule_task', 'list_schedules', 'cancel_schedule', 'set_trust', 'set_heartbeat',
+  'run_shell', 'run_code',
+]));
 
-// 파일 도구(공통층) — REST 두뇌(agent-tools)와 같은 fs-tools 코어. allowedDirs 안에서만.
-const FILE_DECLS = [
-  { name: 'list_files', description: '폴더 안의 파일·하위폴더 목록을 본다. 허용된 폴더 안에서만.',
-    inputSchema: { type: 'object', properties: { dir: { type: 'string' } }, required: ['dir'] } },
-  { name: 'read_file', description: '파일 내용을 읽는다(텍스트). 허용된 폴더 안에서만.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
-  { name: 'write_file', description: '파일을 만들거나 내용을 쓴다(덮어씀). 허용된 폴더 안에서만. 폴더가 허용 안 됐으면 결과의 needGrant를 사용자에게 알리고 허용을 구해.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' } }, required: ['path', 'content'] } },
-  { name: 'make_dir', description: '폴더를 만든다. 허용된 폴더 안에서만.',
-    inputSchema: { type: 'object', properties: { dir: { type: 'string' } }, required: ['dir'] } },
-  { name: 'send_file', description: '허용된 폴더 안의 파일을 사용자에게 채팅으로 보낸다(전달). 사용자가 "그 파일 줘/보내줘"라고 하거나 네가 만든 결과 파일을 건넬 때 호출. 허용폴더 안 파일만. 링크·버튼을 글로 지어내지 말고 반드시 이 도구를 호출해.',
-    inputSchema: { type: 'object', properties: { path: { type: 'string', description: '보낼 파일 경로(허용 폴더 안)' }, note: { type: 'string', description: '함께 전할 짧은 설명(선택)' } }, required: ['path'] } },
-  { name: 'search_files', description: '폴더 하위에서 이름에 키워드가 든 파일을 찾는다. 허용된 폴더 안에서만.',
-    inputSchema: { type: 'object', properties: { dir: { type: 'string' }, query: { type: 'string' } }, required: ['dir'] } },
-  // (grant_dir 제거: 허용은 사용자만 — 엔진이 사용자 답으로만 폴더 허용. 모델은 요청만.)
-  { name: 'run_shell', description: '터미널/셸 명령을 실행한다(허용된 폴더를 작업위치로). 파괴적 명령은 자동 차단. 셸 사용이 아직 허용 안 됐으면 결과 안내대로 사용자 허락을 구해.',
-    inputSchema: { type: 'object', properties: { command: { type: 'string' }, cwd: { type: 'string' } }, required: ['command'] } },
-  // (grant_shell 제거: 터미널 허용도 사용자만 — 엔진이 사용자 답으로만 허용.)
-  { name: 'run_code', description: '코드를 작성해 실행한다(python/node/bash). 긴 코드엔 run_shell보다 편하다. 허용 폴더에서 실행, stdout 반환. 셸/코드 실행은 사용자 허락 필요(허락은 사용자만).',
-    inputSchema: { type: 'object', properties: { language: { type: 'string' }, code: { type: 'string' }, cwd: { type: 'string' } }, required: ['language', 'code'] } },
-];
+// 파일 도구(공통층) — REST(agent-tools)와 같은 fs-tools 코어. allowedDirs 안에서만.
+const FILE_DECLS = toolDecls.toMcp(toolDecls.pick([
+  'list_files', 'read_file', 'write_file', 'make_dir', 'search_files', 'send_file',
+]));
 
 // 작업기억(L2) + 자율도 — REST(agent-tools)와 동일 동작을 구독 두뇌에도 노출.
-// storage(loadAgent/saveAgent)만 다루는 단순 상태변경이라 MCP 서버에서 그대로 가능. (앱 UI emit은 서버라 생략)
-const WORK_DECLS = [
-  { name: 'start_project', description: '새 프로젝트를 시작한다(시작과 끝이 있는 일). 사용자가 새 프로젝트를 언급하거나 "프로젝트로 진행"을 원할 때.',
-    inputSchema: { type: 'object', properties: { title: { type: 'string' }, goal: { type: 'string' } }, required: ['title', 'goal'] } },
-  { name: 'start_routine', description: '반복 루틴을 등록한다(끝없이 반복되는 일). 정기 반복 작업을 언급할 때.',
-    inputSchema: { type: 'object', properties: { title: { type: 'string' }, rhythm: { type: 'string' } }, required: ['title'] } },
-  { name: 'switch_work', description: '현재 활성 작업을 전환한다. id는 start_project/start_routine이 반환한 id.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
-  { name: 'close_project', description: '프로젝트를 완료 처리한다. 작업기억은 archived 보관, 관계요약 1줄을 1층 기억에 승격.',
-    inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
-  // ★2026-07-17: L3(plan_task/resume_task) 구독두뇌 배선 — 그간 agent-tools(앱·CLI·봇)에만 있고 구독 MCP엔 빠져 있었다.
-  //   큰 일을 단계로 쪼개 순차 실행 + 중단 후 이어하기. 계획은 runPlanner(LLM), 단계 저장·진행·재개는 우리 코드.
-  { name: 'plan_task', description: '큰 작업을 단계별로 분해하고 순차 실행한다(L3). 여러 단계가 필요한 복잡한 작업에. 실행 전 계획을 먼저 제시하고 승인받는다.',
-    inputSchema: { type: 'object', properties: { task: { type: 'string' }, projectId: { type: 'string' }, autoApprove: { type: 'boolean' } }, required: ['task'] } },
-  { name: 'resume_task', description: '중단된 프로젝트의 작업을 이어서 실행한다(done 단계는 건너뜀).',
-    inputSchema: { type: 'object', properties: { projectId: { type: 'string' } }, required: ['projectId'] } },
-  { name: 'set_trust', description: '도구 사용 "승인 정도(자율도)"를 바꾼다. 사용자가 앞으로의 방침을 바꿔달라고 할 때만 호출 — 예: "앞으로 묻지 말고 알아서 해"·"매번 안 물어봐도 돼"·"항상 허용" → autonomous, "위험한 것만 물어봐"·"중요한 건 확인해" → ask_risky, "뭐든 일일이 물어봐"·"항상 확인받아" → ask_all. 단발성 "승인/그래"(이번 한 번만 허락)와는 구분해 — 그건 set_trust를 부르지 말고 그냥 작업해.',
-    inputSchema: { type: 'object', properties: { level: { type: 'string', enum: ['ask_all', 'ask_risky', 'autonomous'], description: 'autonomous=확인 없이 진행, ask_risky=위험 작업만 확인(기본), ask_all=모든 변경 작업 확인' } }, required: ['level'] } },
-];
+// ★L3(plan_task/resume_task)도 구독 두뇌에 배선한다 — 한쪽에만 있으면 채널이 갈라진다.
+const WORK_DECLS = toolDecls.toMcp(toolDecls.pick([
+  'start_project', 'start_routine', 'switch_work', 'close_project', 'plan_task', 'resume_task',
+]));
+
+// ★로컬 도구(시간·계산)도 구독 두뇌에 배선한다. 빠지면 **채널 동등성이 깨진다.**
+//   REST 두뇌(gemini/openai/anthropic)는 커넥터가 tools.js 를 자동으로 실어줘서 갖고 있었는데,
+//   구독 두뇌엔 자동으로 실리지 않아, 선언을 합칠 때 **tools.js 가 빠지기 쉽다.**
+//   시간 도구가 없으면 예약이 "오늘이 그날인지 확인해라"를 수행하려다
+//   **run_shell 을 부르고**, 셸 권한이 없어 막히며 사용자가 요청한 적 없는 허용 대기가 생긴다.
+//   ※ fetch_url 은 일부러 뺐다 — 구독은 네이티브 WebFetch 가 이미 허용돼 있어 중복이다.
+const localTools = require('./tools');
+const LOCAL_NAMES = ['get_current_time', 'calculator'];
+const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.includes(d.name)));
 
 (async () => {
   if (!DATA || !AGENT_ID) { console.error('[auxo-mcp-tools] AUXO_DATA_PATH / AUXO_AGENT_ID 필요'); process.exit(1); }
-  storage.init(DATA);
+  storage.initOrExit(DATA);
   // 읽기 전용 공통도구가 쓸 스킬·MCP 카탈로그 경로(REST 두뇌의 engine 경로와 동일 규칙).
   skillsRegistry.setSkillsRoot(path.join(DATA, 'skills'));
   mcpManager.setConfigRoot(path.join(DATA, 'mcp'));
@@ -142,13 +95,17 @@ const WORK_DECLS = [
       ...READ_DECLS,
       ...FILE_DECLS,
       ...WORK_DECLS,
+      ...LOCAL_DECLS,   // 시간·계산 — REST 두뇌와 동일하게(채널 동등성)
     ],
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const { name, arguments: args } = req.params;
+    // ★구독 두뇌는 여기서 도구가 돌아 엔진이 못 본다. 같은 DB 장부에 남긴다.
+    //   기록은 **맨 끝에서 결과를 보고** 한다 — 여기서 미리 남기면 실패도 성공으로 적힌다.
     let r;
     if (name === 'remember') r = memoryTools.rememberFact(AGENT_ID, args || {});
+    else if (name === 'set_nickname') r = memoryTools.setNickname(AGENT_ID, args || {});
     else if (name === 'forget') r = memoryTools.forgetFact(AGENT_ID, args || {});
     else if (name === 'delegate_to_workers') {
       const agent = storage.loadAgent(AGENT_ID);
@@ -181,19 +138,61 @@ const WORK_DECLS = [
       r = await webSearchTool.webSearch(args && args.query, { max: args && args.max, provider: sk.provider, naver: sk.naver, tavily: sk.tavily });
     }
     else if (name === 'install_mcp') {
-      const r0 = mcpManager.addFromCatalog(AGENT_ID, (args && args.id) || '', (args && args.params) || {});
-      if (!r0 || r0.error) { r = { error: (r0 && r0.error) || '설치 실패', needParams: r0 && r0.needParams }; }
-      else {
-        // 설치 직후 실제 연결 검증 — 설정 필요 서버가 조용히 안 되는 걸 잡아 거짓 "완료" 방지.
-        const v = await mcpManager.verifyInstalled(AGENT_ID, r0.id);
-        r = (v && v.ok)
-          ? { installed: true, connected: true, message: `'${r0.name || args.id}' 설치 완료. 바로 쓸 수 있어.` }
-          : { installed: true, connected: false, needsSetup: true, message: `'${r0.name || args.id}' 등록은 됐는데 지금 바로 연결이 안 됐어(${(v && v.error) || '연결 실패'}). 이 도구는 추가 설정(폴더 경로·토큰 등)이 필요하거나 이 PC에 npx/node 준비가 필요할 수 있어. 뭐가 필요한지 사용자에게 물어보거나, 설정 없이 되는 다른 도구를 제안해. "됐다"고 단정하지 마.` };
+      // 설치 전 사전 점검 — 신뢰 스코프 npm 패키지라도 출처만 보고 깔지 않는다.
+      // 수상한 정황(설치 스크립트·저장소 없음·방치·미사용)이면 멈추고 사용자 승인을 받는다.
+      let 점검 = null;
+      if (args && !args.url && !args.confirm && mcpManager.isTrustedPackage(args.id)) {
+        const insp = await mcpManager.inspectPackage(args.id);
+        if (!insp.ok) 점검 = insp;
+      }
+      if (점검) {
+        // ★여기서 `return` 하면 이 핸들러 **맨 끝의 { content:[...] } 감싸기를 건너뛴다.**
+        //   그러면 두뇌는 읽을 수 없는 응답을 받고("응답이 비어서…"), 경고는 사용자에게 한 글자도 안 간다.
+        //   설치는 정상 차단되는데 두뇌는 "설치 명령은 실행했어, 오류는 안 났어"라고
+        //   정반대로 말하게 된다. 안전장치가 절반만 작동하는 셈 — 알리는 쪽이 이 기능의 존재 이유다.
+        //   원인은 API 키 경로(agent-tools.js)의 `return` 을 그대로 옮겨온 것. 거기선 반환값을 그대로 쓰지만
+        //   여기선 감싸야 한다. → **다른 도구와 똑같이 r 에 담아 한 출구로 내보낸다.**
+        r = { needsConfirm: true, inspection: 점검.info, warnings: 점검.warnings,
+          message: `아직 설치 안 했어. '${args.id}' 확인 결과 짚어둘 게 있어:\n- ${점검.warnings.join('\n- ')}\n사용자에게 이걸 그대로 알리고 "그래도 설치할까요?"라고 물어봐. 승인하면 confirm:true 로 다시 호출해. 승인 없이 설치하지 마.` };
+      } else {
+        // 원격(HTTP) MCP — 주소가 오면 그대로 붙인다. 설치형과 달리 이 PC에서 코드를 돌리지 않는다.
+        const r0 = (args && args.url)
+          ? mcpManager.addRemoteServer(AGENT_ID, { id: args.id, name: args.id || args.url, url: args.url, token: args.token, refreshToken: args.refreshToken, headers: args.headers })
+          : mcpManager.addFromCatalog(AGENT_ID, (args && args.id) || '', (args && args.params) || {});
+        if (!r0 || r0.error) { r = { error: (r0 && r0.error) || '설치 실패', needParams: r0 && r0.needParams }; }
+        else {
+          // 설치 직후 실제 연결 검증 — 설정 필요 서버가 조용히 안 되는 걸 잡아 거짓 "완료" 방지.
+          const v = await mcpManager.verifyInstalled(AGENT_ID, r0.id);
+          r = (v && v.ok)
+            ? { installed: true, connected: true, message: `'${r0.name || args.id}' 설치 완료. 바로 쓸 수 있어.` }
+            : { installed: true, connected: false, needsSetup: true, message: `'${r0.name || args.id}' 등록은 됐는데 지금 바로 연결이 안 됐어(${(v && v.error) || '연결 실패'}). 이 도구는 추가 설정(폴더 경로·토큰 등)이 필요하거나 이 PC에 npx/node 준비가 필요할 수 있어. 뭐가 필요한지 사용자에게 물어보거나, 설정 없이 되는 다른 도구를 제안해. "됐다"고 단정하지 마.` };
+        }
       }
     }
     else if (name === 'install_skill') {
       const r0 = await skillsRegistry.installFromCatalog(AGENT_ID, (args && args.id) || '');
       r = (r0 && r0.installed) ? { installed: true, message: '스킬 설치 완료.' } : { error: (r0 && r0.error) || '설치 실패' };
+    }
+    // 능력 회수: 설치만 있고 삭제가 없으면 비대칭이다. 삭제는 사용자가 말했을 때만(도구 설명에 명시).
+    else if (name === 'remove_mcp') {
+      const want = String((args && args.id) || '').trim().toLowerCase();
+      const servers = mcpManager.listServers(AGENT_ID) || [];
+      const hit = servers.find(s => String(s.id).toLowerCase() === want || String(s.name || '').toLowerCase() === want);
+      if (!hit) r = { error: `그런 MCP 없음: ${(args && args.id) || ''}`, installed: servers.map(s => ({ id: s.id, name: s.name })) };
+      else {
+        const r0 = mcpManager.removeServer(AGENT_ID, hit.id);
+        r = (r0 && r0.error) ? { error: r0.error } : { removed: true, name: hit.name || hit.id, message: `'${hit.name || hit.id}' MCP를 삭제했어. 이제 그 도구들은 못 써.` };
+      }
+    }
+    else if (name === 'uninstall_skill') {
+      const want = String((args && args.name) || '').trim().toLowerCase();
+      const skills = skillsRegistry.list(AGENT_ID) || [];
+      const hit = skills.find(s => String(s.id).toLowerCase() === want || String(s.name || '').toLowerCase() === want);
+      if (!hit) r = { error: `그런 스킬 없음: ${(args && args.name) || ''}`, installed: skills.map(s => ({ id: s.id, name: s.name })) };
+      else {
+        const r0 = skillsRegistry.remove(AGENT_ID, hit.id);
+        r = (r0 && r0.error) ? { error: r0.error } : { removed: true, name: hit.name || hit.id, message: `'${hit.name || hit.id}' 스킬을 삭제했어.` };
+      }
     }
     else if (name === 'install_skill_web') {
       // 3c: 공개 웹 설치 — AI 인젝션 판정(D3)엔 이 에이전트의 구독 두뇌로 generate.
@@ -223,8 +222,9 @@ const WORK_DECLS = [
     }
     else if (name === 'schedule_task') {
       const s = scheduler.createSchedule(args);
-      if (!s.title || !s.prompt) r = { error: 'title과 prompt가 필요해' };
-      else { const fresh = storage.loadAgent(AGENT_ID); if (!fresh) r = { error: '저장 실패' }; else { fresh.schedules = fresh.schedules || []; fresh.schedules.push(s); storage.saveAgent(fresh); r = { scheduled: true, id: s.id, message: `'${s.title}' 예약 완료 — ${scheduler.describe(s)}.` }; } }
+      if (s.error) r = { error: s.error };      // 예: weekly 인데 요일을 안 줬다 → 되묻게 한다
+      else if (!s.title || !s.prompt) r = { error: 'title과 prompt가 필요해' };
+      else { const fresh = storage.loadAgent(AGENT_ID); if (!fresh) r = { error: '저장 실패' }; else { fresh.schedules = fresh.schedules || []; fresh.schedules.push(s); storage.saveAgent(fresh); r = { scheduled: true, id: s.id, message: `'${s.title}' 예약 완료 — ${scheduler.describe(s)}.${scheduler.caveat(s)}` }; } }
     }
     else if (name === 'list_schedules') {
       const fresh = storage.loadAgent(AGENT_ID) || {};
@@ -311,7 +311,8 @@ const WORK_DECLS = [
         try { const fr = storage.loadAgent(AGENT_ID); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); } } catch (_) {}
         r = { needGrantShell: true, message: '코드 실행은 아직 허용 안 됐어. 이건 사용자만 허용할 수 있어. 사용자 허락 후 다시 시도해.' };
       } else {
-        r = procTools.runCode(ag.allowedDirs || [], args && args.language, args && args.code, args && args.cwd);
+        // `lang` 도 받는다(agent-tools 같은 자리의 주석 참고) — 채널이 달라도 같게.
+        r = procTools.runCode(ag.allowedDirs || [], args && (args.language || args.lang), args && args.code, args && args.cwd);
       }
     }
     // ── 작업기억(L2) — REST(agent-tools)와 동일 로직. storage만 갱신. ──
@@ -350,10 +351,13 @@ const WORK_DECLS = [
           storage.saveAgent(fresh);
           if (rhythm) {
             try {
-              const rhythmFact = brainClaude.promoteRoutineRhythm(routine);
-              if (rhythmFact) {
+              const line = brainClaude.promoteRoutineRhythm(routine);
+              if (line) {
                 const fa = storage.loadAgent(AGENT_ID);
-                if (fa) { brainClaude.ensureMemoryShape(fa.humanFacts || []); const { merged } = brainClaude.integrateMemory(fa.humanFacts || [], [rhythmFact], {}); fa.humanFacts = merged; storage.saveAgent(fa); }
+                if (fa) {
+                  const rr = userMemory.applyMemoryEdits(fa.userMemory, [{ op: 'add', text: line }]);
+                  if (rr.applied) { fa.userMemory = rr.text; storage.saveAgent(fa); }
+                }
               }
             } catch (_) {}
           }
@@ -389,18 +393,16 @@ const WORK_DECLS = [
           else {
             proj.status = 'archived';
             proj.closedAt = new Date().toISOString();
-            brainClaude.ensureMemoryShape(fresh.humanFacts || []);
-            for (const f of (fresh.humanFacts || [])) { if (f.scope === `project:${id}`) f._workArchived = true; }
+            // 통짜 그릇: 작업별 기억 격리(scope)는 두지 않는다 — 그릇은 "이 사람"만 담는다.
             if (fresh.work.activeId === id) fresh.work.activeId = null;
             storage.saveAgent(fresh);
-            // 관계요약 1줄을 1층 기억에 승격(두뇌 필요). 같은 구독 두뇌로 처리, 실패해도 종료는 성립.
-            const gen = pickSubGen(fresh);
-            if (gen) {
-              try {
-                const relFact = await brainClaude.promoteProjectToRelationship(proj, gen);
-                if (relFact) { const fa = storage.loadAgent(AGENT_ID); if (fa) { brainClaude.ensureMemoryShape(fa.humanFacts || []); const { merged } = brainClaude.integrateMemory(fa.humanFacts || [], [relFact], {}); fa.humanFacts = merged; storage.saveAgent(fa); } }
-              } catch (_) {}
-            }
+            // 끝난 프로젝트는 끝점이 있으므로 그릇(존재)에 안 넣는다. 겪은 일이니 일화로 남긴다.
+            try {
+              storage.addEpisodes(AGENT_ID, [{
+                type: '사건', summary: `프로젝트 '${proj.title}'을 완료함`,
+                entities: [proj.title], emotion: { weight: 0.3, valence: 0.5 },
+              }]);
+            } catch (_) {}
             r = { closed: true, id, title: proj.title, message: `프로젝트 '${proj.title}'를 완료했어. 함께한 기억은 요약해서 간직할게.` };
           }
         }
@@ -483,7 +485,16 @@ const WORK_DECLS = [
         }
       }
     }
+    // ★로컬 도구(시간·계산) — tools.js 코어를 그대로 쓴다(REST 두뇌와 같은 구현).
+    else if (LOCAL_NAMES.includes(name)) {
+      // execute 는 async — await 를 빼면 Promise 가 그대로 JSON.stringify 돼 빈 {} 가 나간다.
+      try { r = await localTools.execute(name, args || {}); }
+      catch (e) { r = { error: `${name} 실행 오류: ${e.message}` }; }
+    }
     else r = { error: 'unknown tool: ' + name };
+    // 결과를 보고 장부에 남긴다. 실패 판정 = `{error}` 를 돌려준 경우.
+    //   ※ `{saved:false, message:"이미 알고 있는 내용이야"}` 같은 건 정상 동작이라 실패가 아니다.
+    try { storage.recordToolCall(AGENT_ID, name, !(r && typeof r === 'object' && r.error)); } catch (_) {}
     return { content: [{ type: 'text', text: JSON.stringify(r) }] };
   });
 

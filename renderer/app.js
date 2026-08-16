@@ -112,28 +112,29 @@ function setTheme(theme) {
 applyTheme(getStoredTheme());
 // ── macOS 보정 (2026-07 실측) ────────────────────────────────
 // 1) 신호등 버튼과 햄버거 겹침 방지용 플랫폼 클래스(style.css 참조)
-// 2) Antigravity 모델 드롭다운: macOS 는 agy print 모드 버그(#76 계열)로 Gemini/GPT-OSS 가
-//    응답을 못 돌려줌 → 기본(빈 값)이 Claude Sonnet 으로 동작함을 표기하고, 불안정 모델에 경고 표기.
-if (/Macintosh|Mac OS X/i.test(navigator.userAgent)) {
-  document.body.classList.add('platform-darwin');
-  window.addEventListener('DOMContentLoaded', () => {
-    const sel = document.querySelector('#settings-agy-model');
-    if (sel) [...sel.options].forEach(o => {
-      if (o.value === '') o.textContent = '기본 (Claude Sonnet 4.6 · macOS 검증됨)';
-      else if (!/claude/i.test(o.value)) o.textContent += ' — ⚠️ macOS에서 불안정';
-    });
-  });
-}
 
-/* ── AI 모델(제공자) 메타: API 키 필요 여부·플레이스홀더·기본모델 ───────── */
+
+/* ── AI 모델(제공자) 메타: API 키 필요 여부·플레이스홀더·안내문 ─────────
+ * ★여기에 `supportsWebSearch` 같은 능력 필드를 두지 않는다. 읽는 코드가 없는 죽은 값은
+ *   "이 두뇌는 검색이 안 된다"는 잘못된 판단의 근거가 되고, 그 오해가 사용자 문구까지 간다.
+ *   검색 능력의 **진짜 출처는 engine.js 의 `WEBSEARCH_BRAINS`** 다.
+ *
+ * 실측 — 세 두뇌 모두 검색·PDF 가 된다. 방식만 다르다:
+ *   gemini      자체 `web` 도구(brain-gemini WEB_DECL)      · PDF=inline_data
+ *   claude-api  제공자 네이티브 web_search(opts.webSearch)   · PDF=document 블록
+ *   openai-api  우리 공용 `web_search` 도구(ALWAYS)          · PDF=file 블록
+ */
 const BRAIN_META = {
-  'claude-subscription': { needsKey: false, supportsWebSearch: false },
-  'codex-subscription':  { needsKey: false, supportsWebSearch: false },
-  'antigravity-subscription': { needsKey: false, supportsWebSearch: false },
-  'gemini-api':          { needsKey: true, supportsWebSearch: true, multimodal: true, keyPlaceholder: 'Gemini API 키 (AIza...)', modelPlaceholder: '모델 (선택 — 비우면 최신 flash 자동)', hint: 'Google AI Studio에서 발급한 키.' },
-  'claude-api':          { needsKey: true, supportsWebSearch: true, multimodal: true, keyPlaceholder: 'Anthropic API 키 (sk-ant-...)', modelPlaceholder: '모델 (선택 — 기본 claude-sonnet-5)', hint: 'console.anthropic.com에서 발급한 키. 도구·웹검색·이미지·PDF 지원.' },
-  'openai-api':          { needsKey: true, supportsWebSearch: false, multimodal: true, keyPlaceholder: 'OpenAI API 키 (sk-...)', modelPlaceholder: '모델 (선택 — 비우면 최신 GPT 자동)', hint: 'platform.openai.com에서 발급한 키. 도구·이미지 지원(웹검색·PDF는 추후).' },
-  'openai-compatible':   { needsKey: true, supportsWebSearch: false, multimodal: true, compat: true, keyPlaceholder: 'API 키 입력', modelPlaceholder: '모델명 (필수 — 제공자 문서 참고)', hint: '' },
+  'claude-subscription': { needsKey: false },
+  'codex-subscription':  { needsKey: false },
+  // ★문구 규칙:
+  //   · 입력칸 안내는 **키 생김새(AIza…·sk-…)가 아니라 "무엇을 하면 되는지"**로. 비개발자에겐 접두어가 의미 없다.
+  //   · 능력 나열("도구·웹검색·이미지·PDF 지원")은 **넣지 않는다.** 고르는 데 도움이 안 되고,
+  //     능력이 바뀌면 그대로 거짓이 된다.
+  'gemini-api':          { needsKey: true, multimodal: true, keyPlaceholder: 'Gemini API키를 입력하고 모델 불러오기를 클릭해주세요', hint: 'Google AI Studio에서 발급한 키.' },
+  'claude-api':          { needsKey: true, multimodal: true, keyPlaceholder: 'Anthropic API키를 입력하고 모델 불러오기를 클릭해주세요', hint: 'console.anthropic.com에서 발급한 키.' },
+  'openai-api':          { needsKey: true, multimodal: true, keyPlaceholder: 'OpenAI API키를 입력하고 모델 불러오기를 클릭해주세요', hint: 'platform.openai.com에서 발급한 키.' },
+  'openai-compatible':   { needsKey: true, multimodal: true, compat: true, keyPlaceholder: 'API키를 입력하고 모델명을 직접 입력해주세요', hint: '' },
 };
 
 /* ── OpenAI 호환 제공자 프리셋: 선택하면 base URL·모델 예시·키 발급처 안내 자동 채움 ───────── */
@@ -168,16 +169,143 @@ function updateApiConfigArea(value) {
   const meta = BRAIN_META[value] || {};
   if (compat) compat.classList.toggle('hidden', !meta.compat);
   if (meta.needsKey) {
-    const keyEl = $('#api-key'); const modelEl = $('#api-model'); const hintEl = $('#api-key-hint');
+    const keyEl = $('#api-key'); const hintEl = $('#api-key-hint');
     if (keyEl) keyEl.placeholder = meta.keyPlaceholder || 'API 키 입력';
-    if (modelEl) modelEl.placeholder = meta.modelPlaceholder || '모델 (선택)';
     if (hintEl) hintEl.textContent = meta.hint || '';
+    // ★두뇌가 바뀌면 모델 목록을 비운다 — 안 비우면 **다른 회사 모델을 고른 채로** 넘어간다.
+    resetModelPick('onboard', value);
+    const ld = $('#api-model-load'); if (ld) ld.disabled = !(keyEl && keyEl.value.trim());
   }
   if (meta.compat) {
     const presetSel = $('#onboard-compat-preset');
     const pk = (presetSel && presetSel.value) || 'openrouter';
     applyCompatPreset(pk, { fillBaseURL: true, ids: ONBOARD_COMPAT_IDS });
   }
+}
+
+/* ━━ 모델 고르기 (온보딩·설정 공통) ━━━━━━━━━━━━━━━━━━━━━━
+ * ★기본 모델을 두지 않는다. "비우면 기본값" 방식이면 코드에 박아둔 모델을 쓰게 되는데,
+ *   **제공사가 그 모델을 내리면 두뇌가 통째로 죽는다.**
+ *   기본값을 다른 이름으로 바꿔도 언젠가 또 죽고, 별칭(chat-latest)은 안 죽는 대신
+ *   **뭘 얼마에 쓰는지 감춘다.** → 회사 목록에서 사용자가 직접 고른다.
+ *
+ * 단계는 안 늘어난다: 목록 조회가 성공했다는 건 **키가 유효하다는 뜻**이라, 원래 있던
+ * "연결 테스트"의 역할을 이 버튼이 겸한다.
+ */
+const MODEL_UI = {
+  onboard: { load: '#api-model-load', search: '#api-model-search', sel: '#api-model', manual: '#api-model-manual', msg: '#api-model-msg' },
+  settings: { load: '#settings-model-load', search: '#settings-model-search', sel: '#settings-model', manual: '#settings-model-manual', msg: '#settings-model-msg' },
+};
+const _modelCache = {}; // where → [{id,label,hint}] (검색 필터에 재사용)
+// ★고른 모델을 **상태로 들고 있는다.** select.value 를 그때그때 읽으면,
+//   고른 뒤 목록을 접었을 때(hidden) 값이 같이 사라져 "고른 게 없다"가 된다. 화면과 값은 분리한다.
+const _picked = {}; // where → 고른 모델 id
+
+/** 지금 고른 모델 id. 호환 제공자는 직접 입력칸에서 읽는다. */
+function pickedModel(where) {
+  const u = MODEL_UI[where]; if (!u) return '';
+  const manual = $(u.manual);
+  if (manual && !manual.classList.contains('hidden')) return manual.value.trim();
+  return _picked[where] || '';
+}
+
+/**
+ * 모델을 고른 뒤 화면 정리 — **목록을 접고 "고른 것"만 남긴다.**
+ * ★없으면 눌러도 아무 반응이 없어 사용자가 골랐는지 알 수 없다.
+ */
+function 고름표시(where, id) {
+  const u = MODEL_UI[where]; if (!u) return;
+  _picked[where] = id;
+  const 이름 = (_modelCache[where] || []).find((m) => m.id === id)?.label || id;
+  const sel = $(u.sel); if (sel) sel.classList.add('hidden');
+  const se = $(u.search); if (se) se.classList.add('hidden');
+  const ld = $(u.load); if (ld) { ld.classList.remove('hidden'); ld.textContent = '다른 모델 고르기'; }
+  const ms = $(u.msg); if (ms) ms.textContent = `✅ 선택됨 — ${이름}`;
+}
+
+/** 두뇌가 바뀌면 목록을 비운다 — 남아 있으면 다른 회사 모델을 고른 채로 넘어간다. */
+function resetModelPick(where, mode) {
+  const u = MODEL_UI[where]; if (!u) return;
+  const 호환 = mode === 'openai-compatible';
+  _modelCache[where] = null;
+  _picked[where] = '';   // ★고른 값도 함께 비운다 — 안 비우면 다른 회사 모델이 남는다
+  const sel = $(u.sel); if (sel) { sel.innerHTML = ''; sel.classList.add('hidden'); }
+  const se = $(u.search); if (se) { se.value = ''; se.classList.add('hidden'); }
+  const ma = $(u.manual); if (ma) ma.classList.toggle('hidden', !호환);
+  const ld = $(u.load); if (ld) { ld.classList.toggle('hidden', 호환); ld.textContent = '모델 불러오기'; }
+  const ms = $(u.msg); if (ms) ms.textContent = 호환 ? '이 제공자는 목록을 못 불러와요. 모델명을 직접 입력해 주세요.' : '';
+}
+
+/** 지금 쓰는 모델을 목록에 한 줄로 얹는다(설정을 열었을 때 "무엇을 쓰는 중인지" 보이게). */
+function showCurrentModel(where, id, mode) {
+  const u = MODEL_UI[where]; if (!u || !id) return;
+  if (mode === 'openai-compatible') { const ma = $(u.manual); if (ma) { ma.value = id; ma.classList.remove('hidden'); } return; }
+  // ★목록을 그리지 않고 "지금 이걸 쓰는 중"만 한 줄로. 고른 뒤 화면(고름표시)과 같은 모양이라 헷갈리지 않는다.
+  _picked[where] = id;
+  const sel = $(u.sel); if (sel) { sel.innerHTML = ''; sel.classList.add('hidden'); }
+  const se = $(u.search); if (se) se.classList.add('hidden');
+  const ld = $(u.load); if (ld) { ld.classList.remove('hidden'); ld.textContent = '다른 모델 고르기'; }
+  const ms = $(u.msg); if (ms) ms.textContent = `지금 쓰는 중 — ${id}`;
+}
+
+function renderModelList(where, list) {
+  const u = MODEL_UI[where];
+  const sel = $(u.sel); if (!sel) return;
+  sel.innerHTML = '';
+  for (const m of list) {
+    const o = document.createElement('option');
+    o.value = m.id;
+    // ★모델명만 보여준다. "1.05M 담김"(컨텍스트 크기) 같은 건 **비개발자가 모른다.**
+    //   고르는 데 도움이 안 되면서 줄만 길어진다. hint 는 데이터로만 두고 화면엔 안 쓴다.
+    o.textContent = m.label;
+    sel.appendChild(o);
+  }
+  sel.classList.remove('hidden');
+  const se = $(u.search); if (se) se.classList.remove('hidden');
+}
+
+async function loadModels(where, mode, apiKey) {
+  const u = MODEL_UI[where];
+  const ld = $(u.load), ms = $(u.msg);
+  if (!apiKey) { if (ms) ms.textContent = '먼저 API 키를 붙여넣어 주세요.'; return false; }
+  if (ld) { ld.disabled = true; ld.textContent = '불러오는 중…'; }
+  if (ms) ms.textContent = '';
+  try {
+    const r = await window.agentAPI.apiModels({ brainMode: mode, apiKey });
+    if (!r || !r.ok) { if (ms) ms.textContent = '❌ ' + ((r && r.error) || '목록을 못 불러왔어요.'); return false; }
+    _modelCache[where] = r.models;
+    renderModelList(where, r.models);
+    // ★개수("10개 중에서")는 넣지 않는다 — 목록을 보면 안다.
+    if (ms) ms.textContent = '✅ 키 확인됐어요. 사용할 모델을 골라주세요.';
+    return true;
+  } catch (e) {
+    if (ms) ms.textContent = '❌ ' + e.message; return false;
+  } finally {
+    if (ld) { ld.disabled = false; ld.textContent = '다시 불러오기'; }
+  }
+}
+
+function wireModelPick(where, getMode, getKey, onPicked) {
+  const u = MODEL_UI[where];
+  $(u.load)?.addEventListener('click', async () => {
+    const ok = await loadModels(where, getMode(), getKey());
+    if (onPicked) onPicked(false); // 목록만 왔을 뿐 아직 안 골랐다
+    return ok;
+  });
+  $(u.sel)?.addEventListener('change', (e) => {
+    const id = e.target.value;
+    if (!id) return;
+    고름표시(where, id);                       // ★목록을 접고 "선택됨 — 모델명"만 남긴다
+    if (onPicked) onPicked(true);
+  });
+  $(u.manual)?.addEventListener('input', () => { if (onPicked) onPicked(!!pickedModel(where)); });
+  $(u.search)?.addEventListener('input', () => {
+    const all = _modelCache[where] || [];
+    const q = ($(u.search).value || '').trim().toLowerCase();
+    renderModelList(where, q ? all.filter(m => (m.id + ' ' + m.label).toLowerCase().includes(q)) : all);
+    _picked[where] = '';           // ★검색으로 목록이 바뀌면 **고른 값도 푼다** — 안 그러면 화면엔 안 보이는데 저장된다
+    if (onPicked) onPicked(false);
+  });
 }
 
 /* ━━ 온보딩 3단계 Wizard ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
@@ -199,11 +327,9 @@ function goWizStep(n) {
 /** ② 진입: 모드에 따라 구독(설치/로그인) / API(발급·입력·테스트) 분기 */
 function enterWizStep2() {
   const mode = selectedMode();
-  const isSub = mode === 'claude-subscription' || mode === 'codex-subscription' || mode === 'antigravity-subscription';
+  const isSub = mode === 'claude-subscription' || mode === 'codex-subscription';
   $('#prep-sub').classList.toggle('hidden', !isSub);
   $('#prep-api').classList.toggle('hidden', isSub);
-  const agyNotice = $('#agy-notice'); // antigravity 리스크·스킬미지원 안내는 antigravity 선택 시만
-  if (agyNotice) agyNotice.classList.toggle('hidden', mode !== 'antigravity-subscription');
   setWiz2Ready(false);
   if (isSub) {
     $('#wiz2-title').textContent = '구독 계정에 연결할게요';
@@ -211,7 +337,7 @@ function enterWizStep2() {
     updateCliGate(mode);
   } else {
     $('#wiz2-title').textContent = 'API 키로 연결할게요';
-    $('#wiz2-sub').textContent = '키를 발급받아 붙여넣고, 연결을 확인해요.';
+    $('#wiz2-sub').textContent = '키를 발급받아 붙여넣고, 사용할 모델을 골라요.';
     updateApiConfigArea(mode);
     const iss = API_ISSUE[mode] || {};
     if ($('#api-issue-desc')) $('#api-issue-desc').textContent = iss.desc || '';
@@ -263,8 +389,8 @@ function renderCliGate(value, r) {
   }
   box.classList.add('warn'); setWiz2Ready(false);
   $('#cli-gate-icon').textContent = '🔌';
-  // node 없음 → 자동설치 불가 폴백 (스크립트 설치형 antigravity 는 node 불필요라 해당 없음)
-  if (!r.installed && r.nodeReady === false && r.installType !== 'script') {
+  // node 없음 → 자동설치 불가 폴백
+  if (!r.installed && r.nodeReady === false) {
     $('#cli-gate-title').textContent = '먼저 Node.js가 필요해요';
     body.innerHTML = `<div class="step-line">이 PC에 Node.js가 없어 자동 설치를 할 수 없어요. 아래에서 설치한 뒤 다시 시도해 주세요.</div>`;
     addGateBtn(body, 'Node.js 받으러 가기 ↗', () => window.agentAPI.envOpenUrl('https://nodejs.org/'));
@@ -276,10 +402,10 @@ function renderCliGate(value, r) {
     body.innerHTML = `<div class="step-line">버튼을 누르면 자동으로 설치하고, 이어서 로그인까지 안내할게요.</div>`;
     addGateBtn(body, '자동 설치하기', () => doCliInstall(value));
   } else if (!r.loginCmd) {
-    // Antigravity 등 별도 로그인 CLI 명령이 없는 경우 — 앱/브라우저에서 로그인 후 재확인 안내.
+    // 별도 로그인 CLI 명령이 없는 두뇌 — 앱/브라우저에서 로그인 후 재확인 안내.
     $('#cli-gate-title').textContent = `${r.name} 로그인이 필요해요`;
-    body.innerHTML = `<div class="step-line">Antigravity 앱(또는 사이트)에서 Google 계정으로 한 번 로그인해 주세요. 로그인하면 이 PC에서 바로 인식돼요.</div>`;
-    addGateBtn(body, 'Antigravity 로그인 안내 열기 ↗', () => window.agentAPI.envOpenUrl(r.docUrl));
+    body.innerHTML = `<div class="step-line">해당 서비스에 한 번 로그인해 주세요. 로그인하면 이 PC에서 바로 인식돼요.</div>`;
+    addGateBtn(body, '로그인 안내 열기 ↗', () => window.agentAPI.envOpenUrl(r.docUrl));
   } else {
     $('#cli-gate-title').textContent = `${r.name} 로그인만 하면 돼요`;
     body.innerHTML = `<div class="step-line">버튼을 누르면 브라우저가 열려요. 로그인하면 자동으로 연결돼요.</div>`;
@@ -367,26 +493,41 @@ $('#api-issue-btn')?.addEventListener('click', () => {
   else alert('이 제공자의 발급처 주소가 없어요. 제공자 사이트에서 키를 받아주세요.');
 });
 
-$('#api-test-btn')?.addEventListener('click', async () => {
+/**
+ * 모델을 고르면 그 모델로 한 번 실제 호출해 확인하고 [다음]을 연다.
+ * ★"연결 테스트" 버튼을 따로 두지 않는다. 목록 조회가 이미 키를 확인하므로
+ *   같은 일을 두 번 시키는 셈이다. **모델을 고르는 순간** 확인이 돈다.
+ *   (목록 조회는 키만 보고, 고른 모델이 실제로 응답하는지는 별개 — 그래서 이 확인은 남긴다.
+ *    **목록에 있어도 죽은 모델이 있다.**)
+ */
+async function confirmPickedModel() {
   const mode = selectedMode();
   const apiKey = $('#api-key')?.value.trim() || '';
-  const model = $('#api-model')?.value.trim() || '';
+  const model = pickedModel('onboard');
   const baseURL = mode === 'openai-compatible' ? ($('#onboard-base-url')?.value.trim() || '') : '';
-  if (!apiKey) { showApiTest('error', '먼저 API 키를 붙여넣어 주세요.'); return; }
-  if (mode === 'openai-compatible' && !baseURL) { showApiTest('error', 'base URL을 입력해 주세요.'); return; }
-  const btn = $('#api-test-btn'); btn.disabled = true; btn.textContent = '확인 중…';
-  showApiTest('pending', '연결을 확인하고 있어요…');
+  if (!model) { setWiz2Ready(false); return; }
+  if (mode === 'openai-compatible' && !baseURL) { showApiTest('error', 'base URL을 입력해 주세요.'); setWiz2Ready(false); return; }
+  showApiTest('pending', '고른 모델로 연결을 확인하고 있어요…');
   try {
     const r = await window.agentAPI.apiTest({ brainMode: mode, apiKey, model, baseURL });
     if (r && r.ok) { showApiTest('ok', '✅ 연결됐어요! 다음으로 넘어갈 수 있어요.'); setWiz2Ready(true); }
-    else { showApiTest('error', '❌ 연결 실패 — ' + ((r && r.error) || '키를 다시 확인해주세요.')); setWiz2Ready(false); }
+    else { showApiTest('error', '❌ 이 모델로는 연결이 안 돼요 — ' + ((r && r.error) || '다른 모델을 골라보세요.')); setWiz2Ready(false); }
   } catch (e) { showApiTest('error', '❌ ' + e.message); setWiz2Ready(false); }
-  finally { btn.disabled = false; btn.textContent = '연결 테스트'; }
-});
+}
 
-// 키/모델/baseURL 바뀌면 이전 테스트 무효화(재확인 요구)
-['#api-key', '#api-model', '#onboard-base-url'].forEach(sel => {
-  $(sel)?.addEventListener('input', () => { setWiz2Ready(false); const tr = $('#api-test-result'); if (tr) tr.classList.add('hidden'); });
+// 키/baseURL 바뀌면 이전 테스트 무효화(재확인 요구). 키가 바뀌면 모델 목록도 못 믿는다.
+['#api-key', '#onboard-base-url'].forEach(sel => {
+  $(sel)?.addEventListener('input', () => {
+    setWiz2Ready(false); const tr = $('#api-test-result'); if (tr) tr.classList.add('hidden');
+    const ld = $('#api-model-load'); if (ld) ld.disabled = !($('#api-key')?.value.trim());
+  });
+});
+$('#api-key')?.addEventListener('input', () => { if (selectedMode() !== 'openai-compatible') resetModelPick('onboard', selectedMode()); });
+
+// 모델 고르기 배선 — 고르는 순간 그 모델로 연결까지 확인한다(별도 "연결 테스트" 버튼 없음).
+wireModelPick('onboard', () => selectedMode(), () => $('#api-key')?.value.trim() || '', (골랐나) => {
+  if (골랐나) { confirmPickedModel(); return; }
+  setWiz2Ready(false); const tr = $('#api-test-result'); if (tr) tr.classList.add('hidden');
 });
 
 /* ── 온보딩: OpenAI 호환 프리셋 변경 ───────────────────── */
@@ -532,7 +673,7 @@ function cropAndResizeAvatar(file) {
 
 /** 사이드바 두뇌 배지 짧은 이름. openai-compatible은 base URL로 제공자 역추정. */
 function brainShortLabel(agent) {
-  const m = { 'claude-subscription': 'Claude', 'codex-subscription': 'Codex', 'antigravity-subscription': 'Antigravity', 'gemini-api': 'Gemini', 'claude-api': 'Claude', 'openai-api': 'GPT' };
+  const m = { 'claude-subscription': 'Claude', 'codex-subscription': 'Codex', 'gemini-api': 'Gemini', 'claude-api': 'Claude', 'openai-api': 'GPT' };
   if (agent.brainMode === 'openai-compatible') {
     const names = { openrouter: 'OpenRouter', xai: 'Grok', deepseek: 'DeepSeek', mistral: 'Mistral', groq: 'Groq', custom: '기타 모델' };
     return names[presetKeyFromBaseURL(agent.baseURL)] || '기타 모델';
@@ -567,7 +708,6 @@ async function openChatScreen(agentId, suppressSmokeReady = false) {
   if (chatInputEl) chatInputEl.placeholder = `${agent.name}에게 메시지 보내기…`;
   $('#memory-persona').textContent = agent.persona;
 
-  renderFacts(agent.humanFacts || []);
 
   // L1: 작업 기억 섹션 렌더링
   try {
@@ -591,7 +731,7 @@ async function openChatScreen(agentId, suppressSmokeReady = false) {
     });
     // 압축으로 접힌 옛 대화가 있으면 맨 위에 "이전 대화 더 보기" 배너(요약만 남고 원문을 못 보던 문제 해결).
     try {
-      // ★2026-07-16: 전량이 아니라 페이지 단위(뒤에서부터 50개씩) — 수만 개 쌓인 사용자도 화면이 안 멈추게.
+      // ★전량이 아니라 페이지 단위(뒤에서부터 50개씩) — 수만 개 쌓인 사용자도 화면이 안 멈추게.
       const page = await window.agentAPI.loadArchive(agentId, { offset: 0, limit: ARCHIVE_PAGE });
       if (page && page.messages && page.messages.length) renderArchiveBanner(messagesEl, agentId, page);
     } catch (_) {}
@@ -616,21 +756,6 @@ async function openChatScreen(agentId, suppressSmokeReady = false) {
 // smoke 모드에서 전역 함수로 노출
 window.showChatScreen = openChatScreen;
 
-/* ── 기억 렌더링 (대화 화면용) ─────────────────────────── */
-function renderFacts(facts) {
-  const list = $('#memory-facts');
-  const countEl = $('#fact-count');
-  if (!list) return;
-
-  if (facts.length === 0) {
-    list.innerHTML = '<li class="fact-empty">아직 없음. 대화를 나눠보세요!</li>';
-  } else {
-    list.innerHTML = facts.map(f =>
-      `<li><span class="fact-label">${escHtml(f.label)}</span><span class="fact-value">${escHtml(f.value)}</span></li>`
-    ).join('');
-  }
-  if (countEl) countEl.textContent = facts.length;
-}
 
 /* ── 타임스탬프 한국어 포맷 ("오전/오후 H:MM") ───────────── */
 function formatTs(ts) {
@@ -796,7 +921,7 @@ function appendMessage(role, content, animate = true, ts = null, opts = {}) {
 }
 
 /** 압축으로 접힌 옛 대화가 있으면 위로 스크롤할 때 자동으로 원본을 되살려 앞에 붙인다. */
-// ★2026-07-22: 클릭 배너 → 스크롤 자동 로드로 교체(합의했던 "위로 올리면 이전 대화가 나온다").
+// ★클릭 배너가 아니라 스크롤 자동 로드다("위로 올리면 이전 대화가 나온다").
 //   상단 근처(<160px)에 닿으면 다음 페이지(ARCHIVE_PAGE개)를 자동으로 불러온다. 전부 붙이면
 //   오래 쓴 사용자(수만 개)는 화면이 멈추므로 페이지 단위 유지. 로딩 중엔 얇은 힌트만 보인다.
 function renderArchiveBanner(messagesEl, agentId, firstPage) {
@@ -1027,11 +1152,9 @@ async function sendMessage(qText, qAtts, alreadyRendered) {
       else { msgDiv = appendMessage('agent', result.response, true, Date.now()); }
 
 
-      // 정직 계층 ③: 도구 배지 상시표시 제거(마스터 결정). 근거는 사용자가 물으면 on-demand 로 답한다.
+      // 정직 계층 ③: 도구 배지를 상시 표시하지 않는다. 근거는 사용자가 물으면 on-demand 로 답한다.
       // 에이전트가 보낸 파일(send_file) — 메신저식 파일 카드(썸네일/아이콘 + 열기·다운로드)
       if (result.sentFiles && result.sentFiles.length) renderFileCards(msgDiv, result.sentFiles);
-      currentAgent.humanFacts = result.humanFacts;
-      renderFacts(result.humanFacts);
     }
   } catch (e) {
     hideTyping();
@@ -1128,8 +1251,8 @@ function fileToBase64(file) {
   });
 }
 // 파일 첨부 가능 두뇌: API 멀티모달 4종(inline_data) + 구독 3종(CLI가 이미지 파일을 직접 읽어 봄).
-// claude(native Read)·codex(read-only 파일읽기)는 실측 확증. antigravity는 동일 패턴이나 CLI 미설치로 미검증.
-const _SUB_VISION = new Set(['claude-subscription', 'codex-subscription', 'antigravity-subscription']);
+// claude(native Read)·codex(read-only 파일읽기)는 실측 확증.
+const _SUB_VISION = new Set(['claude-subscription', 'codex-subscription']);
 function canAttachFiles(brainMode) {
   const meta = BRAIN_META[brainMode];
   return !!(meta && meta.multimodal) || _SUB_VISION.has(brainMode);
@@ -1204,11 +1327,11 @@ if (btnExport) {
   btnExport.addEventListener('click', async () => {
     if (!currentAgent) return;
     btnExport.disabled = true;
+    const origLabel = btnExport.textContent; // 원래 라벨을 기억해 뒀다 그대로 되돌린다
     btnExport.textContent = '내보내는 중...';
 
     try {
-      const includeWork = document.querySelector('input[name="export-scope"]:checked')?.value === 'full'; // 완전 백업(작업·전체대화 포함) 여부
-      const result = await window.agentAPI.exportAgent(currentAgent.id, { includeWork });
+      const result = await window.agentAPI.exportAgent(currentAgent.id); // 항상 전부 담는다(백업은 완전해야 한다)
       const pathEl = $('#export-path');
       if (result.canceled) {
         // 취소됨
@@ -1223,7 +1346,7 @@ if (btnExport) {
       alert('내보내기 오류: ' + e.message);
     } finally {
       btnExport.disabled = false;
-      btnExport.textContent = '내보내기 (Export)';
+      btnExport.textContent = origLabel; // 예전엔 '내보내기 (Export)' 로 하드코딩돼, 한 번 누르면 라벨이 바뀌었다
     }
   });
 }
@@ -1237,8 +1360,7 @@ if (btnExportMd) {
     const orig = btnExportMd.textContent;
     btnExportMd.textContent = '내보내는 중...';
     try {
-      const excludeSensitive = $('#export-exclude-sensitive')?.checked;
-      const result = await window.agentAPI.exportMarkdown(currentAgent.id, { includeSensitive: !excludeSensitive });
+      const result = await window.agentAPI.exportMarkdown(currentAgent.id); // 항상 전부 담는다
       const pathEl = $('#export-md-path');
       if (result.canceled) {
         // 취소됨
@@ -1285,7 +1407,7 @@ if (btnImport) {
       }
 
       // 성공: 복원된 에이전트로 대화 화면 진입
-      statusEl.textContent = `"${result.agent.name}" 가져오기 완료! 기억 ${result.agent.humanFacts.length}개 복원됨. AI 모델을 다시 연결해주세요.`;
+      statusEl.textContent = `"${result.agent.name}" 가져오기 완료! AI 모델을 다시 연결해주세요.`;
       statusEl.classList.remove('hidden', 'import-error');
       statusEl.classList.add('import-ok');
 
@@ -1416,10 +1538,16 @@ function openSettingsScreen() {
   const brainSel = $('#settings-brain');
   if (brainSel) brainSel.value = curMode;
   const keyEl = $('#settings-api-key');
-  if (keyEl) keyEl.value = (currentAgent.apiKeys && currentAgent.apiKeys[curMode]) || currentAgent.apiKey || '';
-  const modelEl = $('#settings-model');
-  if (modelEl) modelEl.value = (currentAgent.models && currentAgent.models[curMode]) || currentAgent.model || '';
-  updateSettingsApiConfig(curMode);
+  // ★**그 두뇌의 키만 보여준다.** 예전엔 없으면 옛 단일키로 폴백해서, 두뇌를 바꿔도
+  //   **이전 제공사 키가 칸에 그대로 남아 있었다.** 사용자는 "키가 들어 있네" 하고 저장하고,
+  //   그 키로 호출돼 401 이 났다(실측 2026-08-14). 비어 있어야 넣어야 할 것을 안다.
+  if (keyEl) keyEl.value = (currentAgent.apiKeys && currentAgent.apiKeys[curMode]) || '';
+  updateSettingsApiConfig(curMode); // ← 안에서 resetModelPick 이 돈다. 복원보다 **먼저** 불러야 안 지워진다.
+  // 지금 쓰는 모델을 목록에 한 줄로 얹어 "무엇을 쓰는 중인지" 보이게 한다.
+  //   [모델 불러오기]를 누르면 전체 목록으로 바뀐다. 안 누르면 지금 것이 그대로 유지된다.
+  // 모델도 마찬가지 — 제미나이 모델명이 GPT 칸에 남으면 "그 모델 없음" 오류가 난다.
+  const 현재모델 = (currentAgent.models && currentAgent.models[curMode]) || '';
+  if (현재모델) showCurrentModel('settings', 현재모델, curMode);
   // OpenAI 호환: 저장된 base URL → 프리셋·입력 복원
   if (curMode === 'openai-compatible') {
     const savedBase = currentAgent.baseURL || '';
@@ -1431,8 +1559,8 @@ function openSettingsScreen() {
     if (baseEl && savedBase) baseEl.value = savedBase;
   }
 
-  // 기억 목록 렌더링
-  renderSettingsFacts(currentAgent.humanFacts || []);
+  // 기억 목록 UI 는 두지 않는다 — 조회·정정·삭제는 전부 대화로 한다(remember/forget).
+  //   화면만 지우고 코드가 남으면 "화면에 기억 목록이 있다"고 잘못 읽게 되므로 코드도 함께 지웠다.
 
   // 텔레그램·디스코드 연결 상태 갱신
   refreshTelegramUI();
@@ -1449,7 +1577,7 @@ function openSettingsScreen() {
   openModal('screen-settings');
 }
 
-// 설정 탭 전환 (2026-07-08 UI 개편: 일반/AI모델/연결/데이터)
+// 설정 탭 전환 (일반/AI모델/연결/데이터)
 document.querySelectorAll('#screen-settings .stab').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
@@ -1534,39 +1662,6 @@ $('#dc-disconnect-btn')?.addEventListener('click', async () => {
   await refreshDiscordUI();
 });
 
-/** 설정 화면: 기억 목록 렌더링 (편집/삭제 가능) */
-function renderSettingsFacts(facts) {
-  const list = $('#settings-facts-list');
-  const countEl = $('#settings-fact-count');
-  if (!list) return;
-
-  if (facts.length === 0) {
-    list.innerHTML = '<li class="fact-empty">아직 기억이 없어요.</li>';
-  } else {
-    list.innerHTML = facts.map((f, i) => `
-      <li class="settings-fact-item" data-index="${i}">
-        <input type="text" class="fact-label-input" value="${escHtml(f.label)}" placeholder="항목" data-field="label">
-        <input type="text" class="fact-value-input" value="${escHtml(f.value)}" placeholder="내용" data-field="value">
-        <button class="btn-fact-delete" data-index="${i}" title="삭제">✕</button>
-      </li>
-    `).join('');
-
-    // 삭제 버튼
-    list.querySelectorAll('.btn-fact-delete').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const idx = parseInt(btn.dataset.index, 10);
-        if (!confirm(`이 기억을 삭제할까요?\n"${currentAgent.humanFacts[idx]?.label}: ${currentAgent.humanFacts[idx]?.value}"`)) return;
-        const result = await window.agentAPI.deleteFact(currentAgent.id, idx);
-        if (result.error) { alert('오류: ' + result.error); return; }
-        currentAgent.humanFacts = result.humanFacts;
-        renderFacts(result.humanFacts);
-        renderSettingsFacts(result.humanFacts);
-      });
-    });
-  }
-
-  if (countEl) countEl.textContent = facts.length;
-}
 
 /** OpenAI 호환 제공자 프리셋 적용(base URL·모델예시·키발급 안내 자동 채움). 설정/온보딩 공용(ids로 구분) */
 function applyCompatPreset(presetKey, opts = {}) {
@@ -1592,26 +1687,17 @@ const ONBOARD_COMPAT_IDS = { base: 'onboard-base-url', model: 'api-model', hint:
 function updateSettingsApiConfig(value) {
   const area = $('#settings-api-config');
   const compat = $('#settings-compat-config');
-  const agy = $('#settings-agy-config');
   const meta = BRAIN_META[value] || {};
   // OpenAI 호환: 프리셋+base URL 영역 토글
   if (compat) compat.classList.toggle('hidden', !meta.compat);
-  // Antigravity: 모델 드롭다운 토글 + 현재 저장된 모델 반영
-  if (agy) {
-    const isAgy = value === 'antigravity-subscription';
-    agy.classList.toggle('hidden', !isAgy);
-    if (isAgy) {
-      const sel = $('#settings-agy-model');
-      if (sel) sel.value = (currentAgent && currentAgent.models && currentAgent.models['antigravity-subscription']) || '';
-    }
-  }
   if (area) {
     if (meta.needsKey) {
       area.classList.remove('hidden');
-      const k = $('#settings-api-key'); const m = $('#settings-model'); const h = $('#settings-api-hint');
+      const k = $('#settings-api-key'); const h = $('#settings-api-hint');
       if (k) k.placeholder = meta.keyPlaceholder || 'API 키 입력';
-      if (m) m.placeholder = meta.modelPlaceholder || '모델 (선택)';
       if (h) h.textContent = meta.hint || ''; // 호환 모드는 api-hint 비움(안내는 compat-hint에)
+      // ★두뇌가 바뀌면 모델 목록을 비운다(온보딩과 같은 이유 — 다른 회사 모델이 남으면 안 된다).
+      resetModelPick('settings', value);
     } else {
       area.classList.add('hidden');
     }
@@ -1638,13 +1724,16 @@ if (settingsBrainSel) {
   settingsBrainSel.addEventListener('change', () => {
     const v = settingsBrainSel.value;
     const keyEl = $('#settings-api-key');
-    const modelEl = $('#settings-model');
     // 선택한 제공자의 보관함 값 로드(없으면 빈칸). 제공자마다 키가 따로 보관됨.
     const ks = (currentAgent && currentAgent.apiKeys) || {};
     const ms = (currentAgent && currentAgent.models) || {};
     if (keyEl) keyEl.value = ks[v] || '';
-    if (modelEl) modelEl.value = ms[v] || '';
-    updateSettingsApiConfig(v);
+    // ★여기에 `modelEl.value = ms[v]` 식으로 값을 꽂지 않는다.
+    //   모델칸은 입력칸이 아니라 목록(select)이라 값을 꽂아도 아무 일도 안 일어나고,
+    //   그 두뇌에 **저장된 모델이 있어도 안 보여줘** 매번 다시 고르게 만든다.
+    updateSettingsApiConfig(v);           // 안에서 resetModelPick — 이전 두뇌 목록을 비운다
+    const 저장된 = ms[v] || '';
+    if (저장된) showCurrentModel('settings', 저장된, v);  // 쓰던 게 있으면 그대로 보여준다
     // OpenAI 호환: 저장된 base URL이면 그 프리셋 복원, 없으면 OpenRouter 기본 추천
     if (v === 'openai-compatible') {
       const savedBase = (currentAgent && currentAgent.baseURL) || '';
@@ -1722,7 +1811,9 @@ async function renderSettingsMcp() {
           <button class="btn-mcp-test" data-id="${escHtml(s.id)}" title="연결 테스트">테스트</button>
           <button class="btn-skill-delete" data-id="${escHtml(s.id)}" title="삭제">✕</button>
         </div>
-        <div class="skill-desc">${escHtml(s.command)} ${escHtml((s.args || []).join(' '))}</div>
+        <div class="skill-desc">${s.url
+          ? `🌐 ${escHtml(s.url)}${(s.headers && (s.headers.Authorization || s.headers.authorization)) ? ' · 인증 연결됨' : ''}`
+          : `${escHtml(s.command || '')} ${escHtml((s.args || []).join(' '))}`}</div>
         <label class="skill-toggle" style="margin-top:4px"><input type="checkbox" class="mcp-enabled" data-id="${escHtml(s.id)}" ${s.enabled !== false ? 'checked' : ''}> 서버 켜기(전역 — 모든 에이전트 공통)</label>
         <label class="skill-toggle" style="margin-top:4px"><input type="checkbox" class="mcp-auto" data-id="${escHtml(s.id)}" ${s.autoApprove ? 'checked' : ''}> 위험 도구 자동 허용(신뢰) — 끄면 실행 전 물어봄</label>
       </li>`).join('');
@@ -1752,22 +1843,8 @@ async function renderSettingsMcp() {
   if (countEl) countEl.textContent = (servers || []).length;
 }
 
-// MCP 서버 추가 버튼
-const btnAddMcp = $('#btn-add-mcp');
-if (btnAddMcp) {
-  btnAddMcp.addEventListener('click', async () => {
-    const name = $('#mcp-name')?.value.trim();
-    const command = $('#mcp-command')?.value.trim();
-    const args = $('#mcp-args')?.value.trim();
-    if (!command) { alert('실행 명령을 입력해주세요.'); return; }
-    const r = await window.agentAPI.mcpAdd(currentAgent && currentAgent.id, { name, command, args });
-    if (r && r.error) { alert('추가 실패: ' + r.error); return; }
-    $('#mcp-name').value = ''; $('#mcp-command').value = ''; $('#mcp-args').value = '';
-    alert(`MCP 서버 "${r.name}" 추가됨. "테스트"로 연결을 확인해보세요.`);
-    renderSettingsMcp();
-    renderMcpCatalog();
-  });
-}
+// 'MCP 직접 추가(명령)'은 두지 않는다: 신뢰검사 없는 임의 명령 등록 우회 통로가 된다.
+// 확장은 능력 메뉴(빠른 추가) + 에이전트 대화(find_mcp→install_mcp)로 일원화.
 
 /** 능력: 환경(필요 프로그램) 점검 상태줄 렌더링.
     스킬·MCP 탭 위에 하나씩 있다. 항상 한 줄로 접힌 채 열리고(요약 줄이 이미
@@ -1815,7 +1892,7 @@ async function renderEnv() {
   });
 }
 
-/* 능력 탭 전환 (2026-07-09: 기본 능력 / 스킬 / MCP) */
+/* 능력 탭 전환 (기본 능력 / 스킬 / MCP) */
 document.querySelectorAll('#screen-abilities .stab').forEach(btn => {
   btn.addEventListener('click', () => {
     const tab = btn.dataset.tab;
@@ -1869,20 +1946,7 @@ async function renderMcpCatalog() {
   }));
 }
 
-// JSON으로 MCP 추가
-const btnAddMcpJson = $('#btn-add-mcp-json');
-if (btnAddMcpJson) {
-  btnAddMcpJson.addEventListener('click', async () => {
-    const text = $('#mcp-json')?.value.trim();
-    if (!text) { alert('JSON을 붙여넣어 주세요.'); return; }
-    const r = await window.agentAPI.mcpAddFromJson(currentAgent && currentAgent.id, text);
-    if (r && r.error) { alert('추가 실패: ' + r.error); return; }
-    $('#mcp-json').value = '';
-    alert(`${(r.added || []).length}개 서버 추가됨.`);
-    renderSettingsMcp();
-    renderMcpCatalog();
-  });
-}
+// 'JSON으로 MCP 추가'도 두지 않는다: 위 '명령 추가'와 동일한 우회 통로다.
 
 // 스킬 가져오기(폴더) 버튼
 const btnImportSkill = $('#btn-import-skill');
@@ -2035,6 +2099,15 @@ if (btnOpenNotifications) {
   btnOpenNotifications.addEventListener('click', openNotificationsScreen);
 }
 
+// 문의·소개 (햄버거 메뉴) — 설정 깊숙이 묻혀 있던 '도움말·문의'를 옮겨온 화면
+function openAboutScreen() {
+  openModal('screen-about');
+}
+const btnOpenAbout = $('#btn-open-about');
+if (btnOpenAbout) {
+  btnOpenAbout.addEventListener('click', openAboutScreen);
+}
+
 // 뒤로 가기
 const btnSettingsBack = $('#btn-settings-back');
 if (btnSettingsBack) {
@@ -2056,6 +2129,33 @@ if (btnNotificationsBack) {
 }
 
 // 저장
+/* ── 문제 기록 · GitHub ─────────────────────────────────────────────
+   안 될 때 사용자가 알려주려 해도 **로그가 어디 있는지 모른다.** 파일로 꺼내 준다.
+   ★자동 전송이 아니다 — 저장만 하고, 열어 보고 보낼지는 사용자가 정한다.
+     (개인정보 방침의 "우리가 수집하거나 보관하는 것은 없습니다" 와 어긋나면 안 된다) */
+const btnSaveErrLog = $('#btn-save-errorlog');
+if (btnSaveErrLog) {
+  btnSaveErrLog.addEventListener('click', async () => {
+    const out = $('#errorlog-result');
+    btnSaveErrLog.disabled = true;
+    try {
+      const r = await window.agentAPI.saveErrorLog();
+      if (r && r.empty) out.textContent = '아직 기록된 문제가 없어요. 좋은 신호예요.';
+      else if (r && r.canceled) out.textContent = '';
+      else if (r && r.savedTo) out.textContent = `저장했어요 (${r.lines}줄) — ${r.savedTo}`;
+      else out.textContent = '저장하지 못했어요.';
+    } catch (e) { out.textContent = '저장하지 못했어요: ' + (e && e.message || e); }
+    btnSaveErrLog.disabled = false;
+  });
+}
+const linkGhIssue = $('#link-github-issue');
+if (linkGhIssue) {
+  linkGhIssue.addEventListener('click', (e) => {
+    e.preventDefault();
+    window.agentAPI.envOpenUrl('https://github.com/getauxo/auxo-app/issues/new');
+  });
+}
+
 const btnSettingsSave = $('#btn-settings-save');
 if (btnSettingsSave) {
   btnSettingsSave.addEventListener('click', async () => {
@@ -2065,22 +2165,6 @@ if (btnSettingsSave) {
     btnSettingsSave.textContent = '저장 중...';
 
     try {
-      // 기억 수정 사항 수집 (입력 필드 현재 값)
-      const factItems = document.querySelectorAll('.settings-fact-item');
-      for (const item of factItems) {
-        const idx = parseInt(item.dataset.index, 10);
-        const labelInput = item.querySelector('.fact-label-input');
-        const valueInput = item.querySelector('.fact-value-input');
-        if (!labelInput || !valueInput) continue;
-        const newLabel = labelInput.value.trim();
-        const newVal = valueInput.value.trim();
-        const old = currentAgent.humanFacts[idx];
-        if (old && (old.label !== newLabel || old.value !== newVal)) {
-          const r = await window.agentAPI.updateFact(currentAgent.id, idx, newLabel, newVal);
-          if (!r.error) currentAgent.humanFacts = r.humanFacts;
-        }
-      }
-
       // 지침(AUXO.md) 업데이트 (성격·말투·호칭은 설정에서 제거 — 대화로 자연스럽게 맞춰감)
       const auxoMd = $('#settings-auxomd')?.value.trim() || '';
       const trustLevel = $('#settings-trust')?.value || currentAgent.trustLevel || 'ask_risky';
@@ -2088,10 +2172,7 @@ if (btnSettingsSave) {
       // AI 모델(LLM) 연결 업데이트
       const brainMode = $('#settings-brain')?.value || currentAgent.brainMode;
       const apiKey = $('#settings-api-key')?.value.trim() ?? currentAgent.apiKey;
-      // Antigravity 는 모델을 드롭다운으로 고른다(멀티모델). 그 외는 텍스트 입력.
-      const model = (brainMode === 'antigravity-subscription')
-        ? ($('#settings-agy-model')?.value || '')
-        : ($('#settings-model')?.value.trim() ?? currentAgent.model);
+      const model = pickedModel('settings') || '';
       // OpenAI 호환: base URL(다른 모드면 빈 문자열로 저장 — 잔존 방지)
       const isCompat = brainMode === 'openai-compatible';
       const baseURL = isCompat ? ($('#settings-base-url')?.value.trim() || '') : '';
@@ -2099,6 +2180,14 @@ if (btnSettingsSave) {
       if (BRAIN_META[brainMode]?.needsKey && !apiKey) {
         alert('이 AI 모델은 API 키가 필요해요. 키를 입력해주세요.');
         $('#settings-api-key')?.focus();
+        btnSettingsSave.disabled = false;
+        btnSettingsSave.textContent = '저장하기';
+        return;
+      }
+      // ★기본 모델이 없다 — 안 고른 채 저장하면 다음 대화부터 바로 실패한다. 여기서 막는다.
+      if (BRAIN_META[brainMode]?.needsKey && !model) {
+        alert('사용할 모델을 골라주세요. [모델 불러오기]를 누르면 목록이 떠요.');
+        $('#settings-model-load')?.focus();
         btnSettingsSave.disabled = false;
         btnSettingsSave.textContent = '저장하기';
         return;
@@ -2119,7 +2208,6 @@ if (btnSettingsSave) {
         currentAgent = updated;
         // 사이드바 페르소나 업데이트 (값 유지 — 표시만 갱신)
         if (updated.persona != null) $('#memory-persona').textContent = updated.persona;
-        renderFacts(currentAgent.humanFacts || []);
         renderSidebarBrain(currentAgent); // 모델 변경 시 사이드바 두뇌 배지 즉시 갱신
       }
 
@@ -2146,6 +2234,14 @@ if (btnThemeLight) btnThemeLight.addEventListener('click', () => setTheme('light
 /* ── 초기 화면 결정 ───────────────────────────────────── */
 
 (async function init() {
+  // 화면 구석 버전 — **실제 앱 버전**으로 채운다(index.html 에 번호를 박아두지 않는다).
+  //   사용자가 자기 버전을 잘못 알면 "고쳤다는데 왜 그대로냐"를 되풀이하게 된다.
+  //   실패해도 대화에는 지장 없어야 하므로 조용히 넘긴다.
+  try {
+    const info = await window.agentAPI.appInfo();
+    const el = document.getElementById('sidebar-version');
+    if (el && info && info.version) el.textContent = `v${info.version} · 로컬 실행 중`;
+  } catch (_) {}
   try {
     // smoke 모드: 어느 화면을 보여줄지 조회
     const smokeTarget = await window.agentAPI.getSmokeScreenTarget();
@@ -2215,23 +2311,8 @@ if (btnThemeLight) btnThemeLight.addEventListener('click', () => setTheme('light
     } catch (_) {}
   }
 
-  // ── 비차단 기억 추출 완료 이벤트 수신 (b 방식) ──────────────────
-  // claude-subscription 두뇌가 백그라운드에서 기억을 추출하면 기억 패널 갱신
-  if (window.agentAPI.onFactsUpdated) {
-    window.agentAPI.onFactsUpdated(({ agentId, humanFacts }) => {
-      if (!currentAgent || currentAgent.id !== agentId) return;
-      currentAgent.humanFacts = humanFacts;
-      renderFacts(humanFacts);
-
-      // 기억이 추가됐음을 미묘하게 표시
-      const countEl = $('#fact-count');
-      if (countEl) {
-        countEl.classList.add('facts-updated');
-        setTimeout(() => countEl.classList.remove('facts-updated'), 2000);
-      }
-      console.log('[app] 기억 패널 갱신 — facts:', humanFacts.length);
-    });
-  }
+  // 기억 갱신 이벤트 수신부는 두지 않는다 — 갱신해서 그릴 화면이 없다(기억 패널이 없으므로).
+  //   이벤트 자체(facts:updated)는 남겨 둔다: CLI·봇 채널의 진단 로그에 쓰인다.
 })();
 
 /* ── L1 일(Work) 섹션 ──────────────────────────────────── */
@@ -2382,3 +2463,21 @@ if (window.agentAPI && window.agentAPI.onChatIncoming) {
     }
   });
 }
+
+/* ── 설정: 모델 고르기 배선 (온보딩과 같은 함수를 쓴다 — 두 곳이 어긋나지 않게) ── */
+wireModelPick(
+  'settings',
+  () => $('#settings-brain')?.value || 'claude-subscription',
+  () => $('#settings-api-key')?.value.trim() || '',
+  // ★고르면 [저장하기]를 눌러야 반영된다는 걸 알려준다. 없으면 고르고도 "이게 저장된 건가?" 싶다.
+  (골랐나) => {
+    if (!골랐나) return;
+    const ms = $(MODEL_UI.settings.msg);
+    if (ms) ms.textContent += ' · 아래 [저장하기]를 눌러야 반영돼요';
+  },
+);
+// 키를 새로 넣으면 이전 목록은 못 믿는다 → 비운다(호환 제공자는 직접 입력이라 그대로 둔다).
+$('#settings-api-key')?.addEventListener('input', () => {
+  const mode = $('#settings-brain')?.value || '';
+  if (mode !== 'openai-compatible') resetModelPick('settings', mode);
+});

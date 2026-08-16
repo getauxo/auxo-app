@@ -26,7 +26,7 @@ const DANGER = /(\brm\s+-[a-z]*r[a-z]*f|\brm\s+-[a-z]*f[a-z]*r|\bdel\s+\/|\brmdi
 function isDangerous(cmd) { return DANGER.test(String(cmd || '')); }
 
 // 보호 경로: 호스트 Claude Code 설정·플러그인(~/.claude, 플러그인 마켓플레이스) 등 시스템 폴더.
-// 분신이 남의 스킬/플러그인을 "고치겠다"며 이 폴더를 git·수정하는 정체성 오염 사고(2026-07-14) 차단.
+// 분신이 남의 스킬/플러그인을 "고치겠다"며 이 폴더를 git·수정하는 정체성 오염을 막는다.
 const PROTECTED = /(\.claude[\\/]|[\\/]\.claude(["'\s]|$)|claude[\\/]plugins[\\/]|[\\/]plugins[\\/]marketplaces[\\/])/i;
 function touchesProtected(cmd) { return PROTECTED.test(String(cmd || '')); }
 
@@ -56,7 +56,10 @@ function resolveCwd(allowedDirs, cwd) {
 
 function runShell(allowedDirs, command, cwd, opts = {}) {
   const cmd = String(command || '').trim();
-  if (!cmd) return { error: '실행할 명령이 비어 있어.' };
+  // 같은 원칙 — 오류는 **무엇을 고쳐야 하는지** 말한다(runCode 쪽 주석 참고).
+  //   ※ run_code 와 달리 여기선 이름을 틀린 사례를 아직 못 봤다. 그래서 별칭은 안 받고
+  //     메시지만 맞춘다(안 본 것을 추측으로 넓히지 않는다).
+  if (!cmd) return { error: '실행할 명령이 비어 있어. 인자 이름은 **command** 야.' };
   if (isDangerous(cmd)) return { blocked: true, error: '파괴적/위험 명령이라 차단했어: ' + cmd };
   if (touchesProtected(cmd)) return { blocked: true, error: '시스템/설정 폴더(~/.claude·플러그인 등)는 이 앱의 작업 범위가 아니라 건드릴 수 없어. 이건 Auxo 기능이 아니야.' };
   // Auxo 자체 코드·데이터(우리 계층·지침)를 절대경로로 직접 겨냥하면 차단 — 셸을 통한 자기수정 방지.
@@ -85,7 +88,15 @@ const EXTS = { python: 'py', python3: 'py', node: 'js', javascript: 'js', js: 'j
 function runCode(allowedDirs, language, code, cwd, opts = {}) {
   const lang = String(language || '').toLowerCase();
   const runner = RUNNERS[lang];
-  if (!runner) return { error: `지원 안 하는 언어: ${language} (python/node/bash 중 하나)` };
+  // ★오류가 **무엇을 고쳐야 하는지** 말해야 두뇌가 다음 시도에서 고친다.
+  //   예전 문구는 `지원 안 하는 언어: undefined` 였다. 값이 undefined 라는 건
+  //   "인자를 안 줬거나 이름을 틀렸다"는 뜻인데 그 말이 없어서, gemini 가 `lang` 으로 보낸 뒤
+  //   **똑같은 실수를 3번 반복하고** 결국 포기했다(실측 2026-08-14).
+  if (!runner) {
+    return { error: language === undefined || language === null || lang === ''
+      ? "언어를 못 받았어. 인자 이름은 **language** 야(lang 아님). 값은 python·node·bash 중 하나."
+      : `지원 안 하는 언어: ${language} (python/node/bash 중 하나)` };
+  }
   if (!String(code || '').trim()) return { error: '실행할 코드가 비어 있어.' };
   // 이 PC에 그 런타임이 실제로 있는지 먼저 확인. 없으면 명확히 알려 다른 언어로 다시 짜게 한다.
   // (Windows는 python 미설치여도 Store 별칭 때문에 실행만 하면 'Python' 안내만 떠 혼란 → 사전 차단)

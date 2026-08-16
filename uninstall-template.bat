@@ -6,7 +6,6 @@ title Auxo 완전 삭제
 set "APPDIR=%~dp0"
 if "%APPDIR:~-1%"=="\" set "APPDIR=%APPDIR:~0,-1%"
 set "DATADIR=%APPDATA%\Auxo"
-set "OLDDATA=%APPDATA%\agentlink-app"
 
 echo.
 echo   ============================================================
@@ -23,11 +22,6 @@ if exist "%DATADIR%" (
   echo         %DATADIR%
 ) else (
   echo     [2] 내 데이터 폴더 — 없음 ^(이미 지워졌거나 실행한 적 없음^)
-)
-if exist "%OLDDATA%" (
-  echo.
-  echo     [3] 옛 버전 데이터 폴더
-  echo         %OLDDATA%
 )
 echo.
 echo   ------------------------------------------------------------
@@ -56,7 +50,6 @@ timeout /t 2 /nobreak > nul
 
 echo   데이터 폴더를 지우는 중...
 if exist "%DATADIR%" rd /s /q "%DATADIR%" 2>nul
-if exist "%OLDDATA%" rd /s /q "%OLDDATA%" 2>nul
 
 if exist "%DATADIR%" (
   echo.

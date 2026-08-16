@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('agentAPI', {
   saveAgent: (data) => ipcRenderer.invoke('agent:save', data),
   updateAgent: (agentId, updates) => ipcRenderer.invoke('agent:update', { agentId, updates }),
   listAgents: () => ipcRenderer.invoke('agent:list'),
+  appInfo: () => ipcRenderer.invoke('app:info'),          // { version } — 화면 구석 버전 표시
+
   loadAgent: (id) => ipcRenderer.invoke('agent:load', id),
   sendMessage: (agentId, userMessage, attachments) => ipcRenderer.invoke('chat:send', { agentId, userMessage, attachments }),
   stopChat: (agentId) => ipcRenderer.invoke('chat:stop', { agentId }), // 생성 중 정지(정지 버튼/ESC) — 진행 중 두뇌 호출 취소
@@ -15,20 +17,19 @@ contextBridge.exposeInMainWorld('agentAPI', {
   getFilePreview: (filePath) => ipcRenderer.invoke('file:preview', { path: filePath }), // 저장된 이미지 → dataUrl(재실행 후 썸네일 복원)
   loadConversation: (agentId) => ipcRenderer.invoke('chat:load', agentId),
   loadArchive: (agentId, opts) => ipcRenderer.invoke('chat:loadArchive', agentId, opts), // 압축으로 접힌 옛 대화(opts={offset,limit} 면 페이지 단위)
-  exportAgent: (agentId, opts) => ipcRenderer.invoke('agent:export', { agentId, includeWork: !!(opts && opts.includeWork) }),
-  exportMarkdown: (agentId, opts) => ipcRenderer.invoke('agent:export-markdown', { agentId, includeSensitive: !(opts && opts.includeSensitive === false) }),
+  // 내보내기는 항상 전부 담는다 — 범위·민감기억 옵션을 두지 않는다
+  exportAgent: (agentId) => ipcRenderer.invoke('agent:export', { agentId }),
+  exportMarkdown: (agentId) => ipcRenderer.invoke('agent:export-markdown', { agentId }),
   importAgent: () => ipcRenderer.invoke('agent:import'),
   skillsList: (agentId) => ipcRenderer.invoke('skills:list', agentId),
   skillsImport: (agentId) => ipcRenderer.invoke('skills:import', agentId),
   skillsRemove: (agentId, id) => ipcRenderer.invoke('skills:remove', { agentId, id }),
   mcpList: (agentId) => ipcRenderer.invoke('mcp:list', agentId),
-  mcpAdd: (agentId, data) => ipcRenderer.invoke('mcp:add', { agentId, data }),
   mcpRemove: (agentId, id) => ipcRenderer.invoke('mcp:remove', { agentId, id }),
   mcpSetEnabled: (agentId, id, enabled) => ipcRenderer.invoke('mcp:setEnabled', { agentId, id, enabled }),
   mcpSetAutoApprove: (agentId, id, val) => ipcRenderer.invoke('mcp:setAutoApprove', { agentId, id, val }),
   mcpCatalog: () => ipcRenderer.invoke('mcp:catalog'),
   mcpAddFromCatalog: (agentId, id, params) => ipcRenderer.invoke('mcp:addFromCatalog', { agentId, id, params }),
-  mcpAddFromJson: (agentId, text) => ipcRenderer.invoke('mcp:addFromJson', { agentId, text }),
   cliCheck: (brainMode) => ipcRenderer.invoke('cli:check', brainMode),
   noticeGetOff: () => ipcRenderer.invoke('notice:getOff'),
   noticeSetOff: (off) => ipcRenderer.invoke('notice:setOff', off),
@@ -41,15 +42,16 @@ contextBridge.exposeInMainWorld('agentAPI', {
   cliInstall: (brainMode) => ipcRenderer.invoke('cli:install', brainMode),
   cliLogin: (brainMode) => ipcRenderer.invoke('cli:login', brainMode),
   apiTest: (cfg) => ipcRenderer.invoke('api:test', cfg),
+  apiModels: (cfg) => ipcRenderer.invoke('api:models', cfg), // 키로 모델 목록 조회(키 검증 겸함)
   onCliInstallProgress: (cb) => { const h = (_, d) => cb(d); ipcRenderer.on('cli:install-progress', h); return () => ipcRenderer.removeListener('cli:install-progress', h); },
   onCliLoginProgress: (cb) => { const h = (_, d) => cb(d); ipcRenderer.on('cli:login-progress', h); return () => ipcRenderer.removeListener('cli:login-progress', h); },
   envCheck: () => ipcRenderer.invoke('env:check'),
   envRunSetup: (command, args) => ipcRenderer.invoke('env:runSetup', { command, args }),
   envOpenUrl: (url) => ipcRenderer.invoke('env:openUrl', url),
+  // 문제 기록 파일로 저장 — **자동 전송이 아니다.** 사용자가 열어 보고 보낼지 정한다.
+  saveErrorLog: () => ipcRenderer.invoke('errorlog:save'),
   setOverlayTheme: (theme) => ipcRenderer.invoke('window:setOverlayTheme', theme),
   mcpTest: (agentId, id) => ipcRenderer.invoke('mcp:test', { agentId, id }),
-  deleteFact: (agentId, factIndex) => ipcRenderer.invoke('fact:delete', { agentId, factIndex }),
-  updateFact: (agentId, factIndex, label, value) => ipcRenderer.invoke('fact:update', { agentId, factIndex, label, value }),
   smokeReady: () => ipcRenderer.send('smoke:ready'),
   getSmokeAgentId: () => ipcRenderer.invoke('smoke:get-agent-id'),
   getSmokeScreenTarget: () => ipcRenderer.invoke('smoke:get-screen-target'),

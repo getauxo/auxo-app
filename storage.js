@@ -1,5 +1,5 @@
 /**
- * storage.js — 로컬 SQLite 기반 저장소 (2026-07-20 JSON→SQLite 이관)
+ * storage.js — 로컬 SQLite 기반 저장소 (JSON→SQLite 이관)
  *
  * 이전: userData/auxo-data.json 단일 파일을 매 저장마다 통째 read-modify-write.
  * 지금: userData/auxo.db (node-sqlite3-wasm). 버킷별 테이블 → 관련 행만 R/W.
@@ -11,7 +11,7 @@
  *
  * ★불변 원칙: 기억 알고리즘은 안 건드린다. 이 파일(그릇)만 교체.
  *   공개 함수 시그니처를 100% 유지 → 소비처 무변경. loadAgent 가 기존과 '동일한 객체'를 재조립해 반환.
- * ★이관 정책(2026-07-20): 전원 fresh-start. 옛 JSON 임포트 없음 → *.pre-sqlite.bak 으로 물러남.
+ * ★이관 정책: 전원 fresh-start. 옛 JSON 임포트 없음 → *.pre-sqlite.bak 으로 물러남.
  */
 const fs = require('fs');
 const path = require('path');
@@ -19,7 +19,7 @@ const crypto = require('crypto');
 const { Database } = require('node-sqlite3-wasm');
 
 const DB_FILE = 'auxo.db';
-const LEGACY_JSON = ['auxo-data.json', 'agentlink-data.json'];
+const LEGACY_JSON = ['auxo-data.json'];
 
 let db = null;
 let dbPath = null;
@@ -64,8 +64,119 @@ function _createSchema() {
       ts INTEGER, role TEXT, snippet TEXT, files TEXT, vec BLOB,
       PRIMARY KEY (agent_id, msg_id));
     CREATE INDEX IF NOT EXISTS ix_msgvec_agent ON msg_vec(agent_id, model);
+    -- ★도구 호출 장부. "했다고 말했는데 실제로 불렀나"를 대조하는 데 쓴다.
+    --   구독 두뇌는 도구가 **별도 프로세스(auxo-mcp-tools)**에서 돌아 엔진이 호출을 못 본다.
+    --   두 프로세스가 같은 DB를 쓰므로, 여기 남기면 엔진이 턴 끝에 읽을 수 있다.
+    --   append-only 라 프로세스가 겹쳐도 서로 덮어쓰지 않는다(agents 레코드에 넣으면 lost update).
+    CREATE TABLE IF NOT EXISTS tool_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT, ts INTEGER, name TEXT, ok INTEGER);
+    CREATE INDEX IF NOT EXISTS ix_toolcalls_agent ON tool_calls(agent_id, ts);
   `);
-  db.run('INSERT OR IGNORE INTO meta(k,v) VALUES (?,?)', ['schema_version', '1']);
+}
+
+// ── 스키마 버전 관리 ─────────────────────────────────────────────────────────
+// ★schema_version 은 **쓰기만 하고 읽지 않으면 아무 소용이 없다.**
+//   그래서 아래 두 가지를 막을 수단이 없었다:
+//     ① 사용자가 옛 버전 앱을 다시 실행하면, 옛 코드가 새 구조 DB 를 열고
+//        자기가 모르는 필드를 버린 채 저장한다 → **에러 없이 기억만 조용히 깎인다.**
+//        (같은 모양이 실제로 난 적 있다 — 정리 로직이 감정·safety·scope 를 버렸고 로그에도 안 남았다)
+//     ② 구조를 바꿔도 이관 전 백업이 없어 되돌릴 수단이 없다.
+//   → 버전을 **읽고**, 앱보다 데이터가 새것이면 **열지 않고 정직하게 알리고**,
+//     올려야 하면 **먼저 백업하고** 올린다.
+const SCHEMA_VERSION = 2;
+
+// from → to 로 올릴 때 할 일. 데이터 변경이 없으면 빈 함수라도 남겨 "그 단계를 거쳤음"을 명시한다.
+const MIGRATIONS = {
+  // 1 → 2 : 통짜 그릇(agents.data.userMemory)·도구 호출 장부(tool_calls) 도입 시점을 기준선으로 기록.
+  //   테이블은 CREATE TABLE IF NOT EXISTS 로 이미 만들어지므로 옮길 데이터는 없다.
+  //   버전을 처음 세는 지점이라, 여기서 백업이 한 번 남는 것 자체가 목적이다.
+  1: () => {},
+};
+
+/** 저장된 버전. 기록이 없으면 null(=새 DB 또는 버전 이전 시절). */
+function _readVersion() {
+  try {
+    const r = db.get("SELECT v FROM meta WHERE k='schema_version'");
+    const n = r && Number(r.v);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch (_) { return null; }
+}
+function _writeVersion(v) {
+  db.run("INSERT INTO meta(k,v) VALUES('schema_version',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [String(v)]);
+}
+
+/** 이관 전 원본 그대로 한 벌 남긴다. 최근 3개만 유지(무한히 쌓이면 그것대로 문제). */
+function _backupBeforeMigrate(from) {
+  let bak = null;
+  try {
+    try { db.close(); } catch (_) {}
+    db = null;
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    // 초 단위라 같은 초에 두 번 돌면 이름이 겹친다 → 겹치면 번호를 붙인다.
+    // (겹칠 때 그냥 건너뛰면 "백업했다"고 하면서 실제로는 앞의 것만 남는다 = 조용한 실패)
+    bak = `${dbPath}.v${from}-${stamp}.bak`;
+    for (let i = 2; fs.existsSync(bak) && i < 100; i++) bak = `${dbPath}.v${from}-${stamp}-${i}.bak`;
+    fs.copyFileSync(dbPath, bak);
+    const dir = path.dirname(dbPath);
+    const olds = fs.readdirSync(dir)
+      .filter((f) => f.startsWith(DB_FILE + '.v') && f.endsWith('.bak'))
+      .sort();
+    for (const f of olds.slice(0, Math.max(0, olds.length - 3))) {
+      try { fs.unlinkSync(path.join(dir, f)); } catch (_) {}
+    }
+  } catch (e) {
+    // 백업에 실패하면 이관하지 않는다 — 되돌릴 수단 없이 구조를 바꾸는 게 더 위험하다.
+    const err = new Error(
+      '기억 데이터를 백업하지 못해 업데이트를 멈췄습니다.\n' +
+      '디스크 공간이나 파일 권한을 확인해 주세요.\n\n' + `(${e.message})`);
+    err.code = 'DB_BACKUP_FAILED';
+    throw err;
+  } finally {
+    if (!db) {
+      db = new Database(dbPath);
+      try { db.exec('PRAGMA foreign_keys=ON'); db.exec('PRAGMA busy_timeout=5000'); } catch (_) {}
+    }
+  }
+  return bak;
+}
+
+/**
+ * 버전을 맞춘다. 세 갈래뿐이다.
+ *   같다 → 아무것도 안 한다 / 데이터가 더 새것 → 열지 않는다 / 앱이 더 새것 → 백업하고 올린다
+ * @param {number|null} found  기존 DB 에 적혀 있던 버전(새 DB 면 null)
+ * @param {boolean} existed    이번 실행 전에 DB 파일이 있었나
+ */
+function _guardTooNew(found, existed) {
+  if (!existed || found === null || found <= SCHEMA_VERSION) return;
+  // 앱이 데이터보다 옛것. 열어서 쓰면 모르는 필드를 버린 채 저장하게 된다 → 손대기 전에 멈춘다.
+  try { db.close(); } catch (_) {}
+  db = null;
+  const err = new Error(
+    '이 기억 데이터는 더 새로운 버전의 Auxo 에서 만들어졌습니다.\n' +
+    '지금 버전으로 열면 기억이 손상될 수 있어 열지 않았습니다.\n\n' +
+    '최신 버전 Auxo 를 설치하면 그대로 이어서 쓸 수 있습니다.\n' +
+    `(데이터 v${found} / 이 앱 v${SCHEMA_VERSION})`);
+  err.code = 'DB_TOO_NEW';
+  err.dataVersion = found;
+  err.appVersion = SCHEMA_VERSION;
+  throw err;
+}
+
+function _migrate(found, existed) {
+  if (!existed) { _writeVersion(SCHEMA_VERSION); return; }
+  // 기록이 없는 기존 DB = 버전을 세기 전(v1) 시절 것.
+  const from = found === null ? 1 : found;
+  if (from === SCHEMA_VERSION) { _writeVersion(SCHEMA_VERSION); return; }
+
+  const bak = _backupBeforeMigrate(from);
+  console.log(`[storage] 기억 데이터 v${from} → v${SCHEMA_VERSION} 이관. 백업: ${bak}`);
+  for (let v = from; v < SCHEMA_VERSION; v++) {
+    const step = MIGRATIONS[v];
+    if (!step) throw new Error(`기억 데이터 v${v} → v${v + 1} 이관 절차가 없습니다.`);
+    step();
+  }
+  _writeVersion(SCHEMA_VERSION);
 }
 
 function init(userDataPath) {
@@ -73,11 +184,31 @@ function init(userDataPath) {
   dbPath = path.join(userDataPath, DB_FILE);
   archiveDir = path.join(userDataPath, 'archives');
   _retireLegacyJson(userDataPath);
+  const existed = fs.existsSync(dbPath);
   db = new Database(dbPath);
   try { db.exec('PRAGMA foreign_keys=ON'); db.exec('PRAGMA busy_timeout=5000'); } catch (_) {}
+  // 순서가 중요하다: 읽고 → (열면 안 되면 여기서 멈추고) → 스키마 → 이관.
+  // 열면 안 되는 DB 를 CREATE 로 먼저 건드리지 않는다.
+  const found = existed ? _readVersion() : null;
+  _guardTooNew(found, existed);
   _createSchema();
+  _migrate(found, existed);
   try { require('./fs-tools').setDownloadDir(path.join(userDataPath, 'download')); } catch (_) {}
   try { require('./fs-tools').setProtectedDataPaths([userDataPath]); } catch (_) {}
+}
+
+/**
+ * 터미널 채널(CLI·텔레그램·디스코드·구독 도구 프로세스)의 진입점용.
+ * 앱은 창을 띄울 수 있어 init 을 직접 부르고 dialog 로 알린다.
+ * 여기서는 스택 대신 **사람이 읽을 문장만** 보여 주고 멈춘다 — 채널이 달라도 판정과 문장은 같다.
+ */
+function initOrExit(userDataPath) {
+  try { init(userDataPath); }
+  catch (e) {
+    console.error('\n❌ Auxo 를 시작할 수 없습니다\n');
+    console.error((e && e.message ? e.message : String(e)) + '\n');
+    process.exit(1);
+  }
 }
 
 // ── 신원(uid)·키링 멱등 보정(원본 동작 그대로) ──
@@ -100,7 +231,8 @@ function _ensureKeyring(agent) {
 }
 
 // ── 에이전트 ──
-//   humanFacts(≤50)→facts 테이블(트랜잭션 교체). episodes(무한증가)→episodes 테이블.
+//   기억 그릇(userMemory/refMemory)은 통짜 글이라 agents.data 안에 그대로 들어간다.
+//   facts 테이블은 통짜 전환 전 낡은 낱개 기억을 읽어들이기 위해 남아 있다(첫 실행에 흡수 후 빈다).
 //   saveAgent 는 episodes 를 건드리지 않는다(addEpisodes 가 소유 → 라운드트립 유실 없음).
 function saveAgent(agent) {
   _requireDb();
@@ -150,6 +282,37 @@ function loadConversation(agentId) {
   return db.all('SELECT data FROM messages WHERE agent_id=? AND archived=0 ORDER BY id', [agentId]).map(r => JSON.parse(r.data));
 }
 /** 메시지 덧붙이기(INSERT) — 옛 통째덮어쓰기 lost-update 근본 회피. @returns 전체 활성 대화 */
+/**
+ * 도구 호출을 장부에 남긴다(append-only).
+ * ★왜 필요한가: 두뇌가 도구를 안 부르고 "지웠습니다"라고 답하는 일을
+ *   코드가 잡으려면 "이번 턴에 뭘 불렀나"가 있어야 한다. 구독 두뇌는 도구가 별도
+ *   프로세스에서 돌아 엔진이 못 보므로, 양쪽이 같은 DB의 이 표에 남긴다.
+ */
+function recordToolCall(agentId, name, ok = true) {
+  _requireDb();
+  if (!agentId || !name) return;
+  try { db.run('INSERT INTO tool_calls(agent_id,ts,name,ok) VALUES(?,?,?,?)', [agentId, Date.now(), String(name), ok ? 1 : 0]); }
+  catch (_) { /* 장부 실패가 대화를 막지 않는다 */ }
+}
+
+/** 특정 시각 이후 이 에이전트가 부른 도구 이름들(중복 제거). 턴 경계는 호출자가 ts 로 정한다. */
+function toolCallsSince(agentId, sinceTs) {
+  _requireDb();
+  try {
+    // ★**성공한 호출만** 돌려준다. 실패한 호출을 "했다"의 근거로 쓰면
+    //   *"알림 걸어놨어요"* 라고 해놓고 실제로는 인자가 틀려 실패한 턴이 통과한다(실측).
+    //   사용자에겐 안 한 것과 똑같다 — 오히려 시각·내용까지 들어서 더 믿게 된다.
+    const rows = db.all('SELECT name FROM tool_calls WHERE agent_id=? AND ts>=? AND ok=1 ORDER BY id', [agentId, Number(sinceTs) || 0]);
+    return [...new Set(rows.map(r => r.name))];
+  } catch (_) { return []; }
+}
+
+/** 장부가 무한히 자라지 않게 오래된 것을 지운다(기본 3일). */
+function pruneToolCalls(agentId, keepMs = 3 * 24 * 60 * 60 * 1000) {
+  _requireDb();
+  try { db.run('DELETE FROM tool_calls WHERE agent_id=? AND ts < ?', [agentId, Date.now() - keepMs]); } catch (_) {}
+}
+
 function appendMessages(agentId, newMessages) {
   _requireDb();
   if (!Array.isArray(newMessages) || !newMessages.length) return loadConversation(agentId);
@@ -242,7 +405,14 @@ function addEpisodes(agentId, episodes) {
         if (!sum) continue;
         const lc = sum.toLowerCase();
         if (seen.has(lc)) continue;
-        const rec = { date: (e && e.date) || Date.now(), type: (e.type || '사건'), summary: sum, entities: Array.isArray(e.entities) ? e.entities : [] };
+        // emotion: 겪은 일에 실린 감정. 여기서 빠뜨리면 추출해놓고 저장이 안 된다.
+        //   사람은 사실이 아니라 겪은 일에 감정이 붙는다 — 그래서 그릇이 아니라 일화에 남긴다.
+        const em = (e && e.emotion && typeof e.emotion === 'object') ? e.emotion : null;
+        const rec = {
+          date: (e && e.date) || Date.now(), type: (e.type || '사건'), summary: sum,
+          entities: Array.isArray(e.entities) ? e.entities : [],
+          ...(em ? { emotion: { weight: Number(em.weight) || 0, valence: Number(em.valence) || 0 } } : {}),
+        };
         ins.run([agentId, lc, JSON.stringify(rec)]);
         seen.add(lc);
         added++;
@@ -250,6 +420,29 @@ function addEpisodes(agentId, episodes) {
     } finally { ins.finalize(); }
   });
   return added;
+}
+
+// 되풀이로 인정돼 그릇(존재)으로 올라간 일화에 표시를 남긴다.
+//   표시가 없으면 같은 주제가 4번째·5번째 나올 때마다 두뇌에게 또 물어보게 되어 호출만 는다.
+//   일화 자체는 지우지 않는다 — 원문과 함께 그대로 남는다.
+function markEpisodesPromoted(agentId, summaries) {
+  _requireDb();
+  if (!Array.isArray(summaries) || !summaries.length) return 0;
+  let n = 0;
+  _tx(() => {
+    for (const s of summaries) {
+      const lc = String(s || '').trim().toLowerCase();
+      if (!lc) continue;
+      const row = db.get('SELECT data FROM episodes WHERE agent_id=? AND summary_lc=?', [agentId, lc]);
+      if (!row) continue;
+      let rec; try { rec = JSON.parse(row.data); } catch (_) { continue; }
+      if (rec.promoted) continue;
+      rec.promoted = true;
+      db.run('UPDATE episodes SET data=? WHERE agent_id=? AND summary_lc=?', [JSON.stringify(rec), agentId, lc]);
+      n++;
+    }
+  });
+  return n;
 }
 
 // ── 메시지 임베딩 캐시(P1: 파일 유지 — 핫 아님·캐시·정밀도 보존) ──
@@ -308,11 +501,14 @@ function getDataPath() { return dbPath; }
 
 module.exports = {
   init,
+  initOrExit,
+  SCHEMA_VERSION,
   saveAgent, loadAgent, loadAllAgents,
   saveConversation, loadConversation, appendMessages,
+  recordToolCall, toolCallsSince, pruneToolCalls,
   saveConversationSummary, loadConversationSummary,
   appendArchivedMessages, loadArchivedMessages, loadArchivedWindow, loadArchivedPage, archiveOldestActive,
-  addEpisodes,
+  addEpisodes, markEpisodesPromoted,
   loadMsgEmbCache, saveMsgEmbCache,
   getUnvectorizedMessages, putMsgVecs, loadMsgVecs,
   getDataPath,

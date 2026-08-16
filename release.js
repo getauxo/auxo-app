@@ -3,7 +3,7 @@
  *
  * 왜 필요한가:
  *   배포본을 만들려면 여섯 단계를 거쳐야 하는데, 사람이 매번 빠짐없이 하기 어렵다.
- *   2026-07-10 실제로 "실행해서 정상 기동 확인"이라 보고했지만 실제로는 프로세스 개수만
+ *   "실행해서 정상 기동 확인"이라 보고해놓고 실제로는 프로세스 개수만
  *   세었고, 화면엔 `Cannot find module './discord-bot'` 에러 창이 떠 있었다.
  *   테스터는 앱을 켤 수조차 없었다.
  *
@@ -132,7 +132,7 @@ if (SKIP_LAUNCH) {
   execSync('powershell -NoProfile -Command "Start-Sleep -Seconds 12"', { stdio: 'ignore' });
 
   // 창 제목을 읽는다. "프로세스가 살아있다"만으로는 부족하다 —
-  // Electron 은 에러 대화상자를 띄운 상태에서도 프로세스가 살아있다. (2026-07-10 실제 사고)
+  // Electron 은 에러 대화상자를 띄운 상태에서도 프로세스가 살아있다.
   let titles = '';
   try {
     titles = execSync(

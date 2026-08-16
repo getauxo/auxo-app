@@ -4,7 +4,7 @@
  * Google Generative Language REST API(generateContent)를 직접 호출한다.
  * - 순수 API라서 내장 도구가 없음 → claude CLI 같은 도구 누수 위험 없음.
  * - API 키: 환경변수 GEMINI_API_KEY 우선, 없으면 같은 폴더 `gemini-api-key` 파일.
- * - 모델: env GEMINI_MODEL > 파일 `gemini-model` > DEFAULT_MODEL.
+ * - 모델: env GEMINI_MODEL > 파일 `gemini-model`. **기본값 없음** — 사용자가 목록에서 고른다.
  *
  * 인터페이스는 brain-claude의 generate 계열과 동일 시그니처:
  *   geminiGenerate(systemPrompt, userPrompt, opts) -> Promise<string>
@@ -16,9 +16,13 @@ const path = require('path');
 const localTools = require('./tools'); // keyless 로컬 도구(시간·계산·fetch)
 // L2: 대용량 도구출력 요약 헬퍼 (brain-claude에서 공유)
 const { summarizeToolResult } = require('./brain-claude');
+const toolDecls = require('./tool-decls');   // 라운드 가드(꺼내기와 쓰기 분리)
 
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
-const DEFAULT_MODEL = 'gemini-flash-latest'; // 자동 최신 flash 별칭(노후화 재발 방지). 사용자가 특정 모델 지정 시 그게 우선.
+// ★기본 모델을 두지 않는다 — 상세 근거는 brain-openai.js 같은 자리에.
+//   요지: 기본값은 언젠가 반드시 죽고(OpenAI 에서 실제로 겪음), 별칭은 안 죽는 대신 뭘 얼마에 쓰는지 감춘다.
+//   → 사용자가 목록에서 직접 고른다. 못 고르면 진행을 막는다.
+const MODELS_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const MAX_TOOL_ROUNDS = 10; // function-calling 최대 왕복(무한루프 방지). 다단계 검색(어제/오늘 비교 등)이 6회를 넘겨 미완성되던 문제로 상향.
 
 // 'web' 도구 = 제공자 네이티브 검색/URL읽기를 함수로 감싼 것
@@ -49,10 +53,38 @@ function getApiKey() {
   return _readFile('gemini-api-key');
 }
 
-/** 모델명: env > 파일 > 기본 */
+/** 모델명: env > 파일. **기본값 없음** — 못 찾으면 빈 문자열(호출부가 막는다). */
 function getModel() {
   if (process.env.GEMINI_MODEL && process.env.GEMINI_MODEL.trim()) return process.env.GEMINI_MODEL.trim();
-  return _readFile('gemini-model') || DEFAULT_MODEL;
+  return _readFile('gemini-model') || '';
+}
+
+/**
+ * 이 키로 지금 쓸 수 있는 **대화용** 모델 목록. 반환 형식은 세 두뇌 공통 — [{ id, label, hint }].
+ *
+ * ⚠️ `supportedGenerationMethods` 만으로는 부족하다. 처음엔 "회사가 준 사실이니 정확하다"고 봤는데
+ *    실측하니 **`Gemini 2.5 Flash Preview TTS`(음성 합성)가 통과했다** — TTS·이미지 모델도
+ *    generateContent 를 지원한다. 그래서 이름 규칙 제외를 함께 쓴다(OpenAI 와 같은 한계, 알고 쓴다).
+ *    걸러내는 쪽만 지정하고 나머지는 통과시켜, 새 모델이 나와도 목록에서 사라지지 않게 한다.
+ */
+async function listModels(apiKey) {
+  const key = apiKey || getApiKey();
+  if (!key) throw new Error('GEMINI_API_KEY 없음');
+  const res = await fetch(`${MODELS_ENDPOINT}?key=${encodeURIComponent(key)}&pageSize=200`);
+  if (!res.ok) throw new Error(`모델 목록 조회 실패 (HTTP ${res.status})`);
+  const json = await res.json();
+  // 명백히 대화용이 아닌 것만 뺀다. **완전히는 못 거른다** — 규칙을 늘릴수록 새 모델을 놓친다.
+  //   남는 것(예: Deep Research·Computer Use)은 사용자가 고를 수도 있으니 두고,
+  //   잘못 고른 경우는 호출 실패 메시지로 안내한다.
+  const 제외 = /tts|image|imagen|embedding|aqa|veo|audio|live-|lyria|banana|robotics/i;
+  return (json.models || [])
+    .filter((m) => m && Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
+    .map((m) => {
+      const id = String(m.name || '').replace(/^models\//, '');
+      const 만 = m.inputTokenLimit ? `${Math.round(m.inputTokenLimit / 10000) / 100}M 담김` : '';
+      return { id, label: m.displayName || id, hint: 만 };
+    })
+    .filter((m) => !제외.test(m.id) && !제외.test(m.label));
 }
 
 
@@ -212,6 +244,8 @@ async function geminiGenerate(systemPrompt, userPrompt, opts = {}) {
   const key = opts.apiKey || getApiKey();
   if (!key) throw new Error('GEMINI_API_KEY 없음 (env GEMINI_API_KEY 또는 gemini-api-key 파일에 넣어주세요)');
   const model = opts.model || getModel();
+  // ★기본값이 없다 — 안 고르고 온 건 설정이 덜 된 것이다(근거는 brain-openai.js 같은 자리).
+  if (!model) throw new Error('MODEL_NOT_SET: 쓸 모델을 아직 안 골랐어요. 설정에서 모델을 골라주세요.');
   const sysPart = (systemPrompt && systemPrompt.trim()) ? { system_instruction: { parts: [{ text: systemPrompt }] } } : {};
   const genCfg = { temperature: opts.temperature != null ? opts.temperature : 0.7 };
 
@@ -222,6 +256,13 @@ async function geminiGenerate(systemPrompt, userPrompt, opts = {}) {
     const extraExecute = typeof opts.extraExecute === 'function' ? opts.extraExecute : null;
     const contents = [{ role: 'user', parts: _userParts(userPrompt, opts.attachments) }];
     let usedWeb = false;
+    // ★도구를 부르면서 **같이 보낸 말**을 버리지 않는다.
+    //   gemini 는 [답변 + functionCall]을 한 번에 보낸다. 그 말이 곧 최종 답인 경우가 많다.
+    //   예전엔 functionCall 만 집고 텍스트를 버린 뒤 다음 라운드에 다시 물었는데,
+    //   모델은 **이미 말했다고 여겨** 빈 응답(parts:[] · finishReason=STOP)을 돌려줬다.
+    //   실측(2026-08-14): 1라운드 text="기억해둘게요, 사장님…"(49토큰) → 버림 → 2라운드 parts 0개.
+    //   사용자에겐 답이 안 가고, 5만 토큰짜리 요청만 한 번 더 나갔다.
+    let 라운드말 = '';
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
       // 매 라운드 재구성 — install_mcp가 같은 턴에 새 도구를 extraDecls에 밀어넣으면 즉시 보이게.
       const decls = [...localTools.DECLS, WEB_DECL, ...extraDecls];
@@ -233,13 +274,28 @@ async function geminiGenerate(systemPrompt, userPrompt, opts = {}) {
       const parts = (cand.content && cand.content.parts) || [];
       const calls = parts.map(p => p.functionCall).filter(Boolean);
       if (calls.length === 0) {
-        const text = _text(cand) || '음... 지금 제대로 답을 못 드리겠네요. 다시 한번 말씀해 주시겠어요?';
-        return usedWeb ? text : text; // (출처는 web 결과 텍스트에 이미 포함)
+        const text = _text(cand);
+        if (text) return text;   // (출처는 web 결과 텍스트에 이미 포함)
+        if (라운드말) return 라운드말;   // 도구를 부르며 이미 답을 말해 뒀다 — 그게 사용자에게 갈 말이다
+        // ★빈 응답 — **왜 비었는지 버리지 않는다.**
+        //   예전엔 여기서 "다시 한번 말씀해 주시겠어요?"로 덮었다. 그러면 사용자는 자기가 잘못 말한 줄 알고
+        //   같은 말을 다시 하고, 우리는 원인을 영영 못 본다(실측 2026-08-14: 도구는 정상 호출됐는데 답만 비었다).
+        //   같은 파일 비도구 경로(_post 뒤)는 이미 finishReason 을 담아 던지고 있었다 — 두 경로가 어긋나 있었다.
+        throw new Error(`Gemini 텍스트 없음 (finishReason=${cand.finishReason || '?'}, round=${round + 1})`);
       }
+      { const t = _text(cand); if (t && !라운드말.includes(t)) 라운드말 = 라운드말 ? `${라운드말}\n${t}` : t; }
       contents.push(cand.content); // 모델의 함수호출 턴
       const respParts = [];
+      // 한 라운드에 "꺼내기"와 "쓰기"가 같이 오면, 설명을 못 본 채 인자를 지어낸다 → 막고 다시 부르게 한다.
+      const 라운드가드 = toolDecls.newRoundGuard();
       for (const call of calls) {
         let result;
+        if (라운드가드.blocked(call.name)) {
+          result = 라운드가드.message(call.name);
+          console.log(`[brain-gemini:tool] ${call.name} — 방금 꺼낸 도구라 이번 라운드에선 실행하지 않음`);
+          respParts.push({ functionResponse: { name: call.name, response: { result } } });
+          continue;
+        }
         try {
           if (call.name === 'web') {
             usedWeb = true;
@@ -255,6 +311,7 @@ async function geminiGenerate(systemPrompt, userPrompt, opts = {}) {
           }
           else { result = await localTools.execute(call.name, call.args || {}); }
         } catch (e) { result = { error: String(e.message || e) }; }
+        라운드가드.note(call.name, result);   // load_tools 로 꺼낸 것들을 이번 라운드 동안 잠근다
         console.log(`[brain-gemini:tool] ${call.name}(${JSON.stringify(call.args || {})}) → ` + (typeof result === 'string' ? result : JSON.stringify(result)).slice(0, 400));
         // L2: 대용량 도구출력 요약 — TOOL_RESULT_MAX 초과 시만 LLM 요약 (작은 결과는 비용 0)
         const rawContent = typeof result === 'string' ? result : JSON.stringify(result);
@@ -280,7 +337,7 @@ async function geminiGenerate(systemPrompt, userPrompt, opts = {}) {
     : await _post(key, model, body, opts.timeout || 60000, opts.signal);
   const text = _text(cand);
   if (!text) throw new Error(`Gemini 텍스트 없음 (finishReason=${cand.finishReason || '?'})`);
-  // ③ 상시 출처표시 제거(마스터 결정) — 단발 검색 모드도 출처를 답변에 붙이지 않는다.
+  // ③ 출처를 상시 표시하지 않는다 — 단발 검색 모드도 출처를 답변에 붙이지 않는다.
   return text;
 }
 
@@ -301,5 +358,5 @@ module.exports = {
   askGemini,
   getApiKey,
   getModel,
-  DEFAULT_MODEL,
+  listModels,
 };

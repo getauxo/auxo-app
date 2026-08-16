@@ -121,6 +121,17 @@ body {
   background-size: 22px 22px;
 }
 
+/* 링크 — 전역 색이 없어 브라우저 기본 파란색(#0000EE)이 나왔고, 기본 테마가 다크라
+   메일 주소·안내 링크가 배경에 묻혀 거의 안 보인다.
+   텍스트용 옅은 강조색을 쓴다 → 다크 #818cf8 / 라이트 #5b5bd6 로 테마에 따라 자동 전환. */
+a {
+  color: var(--accent-fg);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+a:hover { color: var(--accent); }
+
 /* ── 커스텀 상단바 (드래그 영역) ───────────────── */
 .titlebar {
   position: fixed;
@@ -324,6 +335,34 @@ select option { background: var(--bg-elev); color: var(--text-main); }
 .hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
 .hidden { display: none !important; }
 
+/* ── 모델 고르기 ────────────────────────────
+   기본 모델을 두지 않고 회사 목록에서 직접 고르게 하는 영역.
+   목록이 수십 개까지 오므로 select 는 스크롤되게 두고, 검색칸을 위에 붙인다. */
+/* ⚠️ 여기에 `min-height`(펼친 높이 확보)를 넣어도 **깜박임은 안 잡힌다.**
+   빈 공간만 생긴다 — 원인이 높이 출렁임이 아니라는 뜻이다. */
+.model-pick { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 8px; }
+/* 버튼은 내용 크기만큼만 — 폭 100%면 바로 위 입력칸과 똑같이 보여서 "누르는 것"인지 모른다. */
+.model-pick > button { width: auto; flex: 0 0 auto; }
+/* 목록·검색은 영역을 꽉 채운다 */
+.model-pick > select, .model-pick > input, .model-pick > .hint { width: 100%; }
+.model-pick select {
+  background: var(--bg-input, #1a1a1e);
+  color: var(--text, #e8e8ea);
+  border: 1px solid var(--border, #33333a);
+  border-radius: var(--radius-sm, 8px);
+  padding: 6px;
+  font-size: 13px;
+  max-height: 190px;      /* 6줄 남짓 — 더 길면 스크롤 */
+  overflow-y: auto;
+}
+/* ★손가락 커서 — 없으면 "여기를 누르면 골라진다"는 걸 모른다.
+   size 를 준 select 는 목록처럼 보이지만 기본 커서가 화살표라 클릭 가능해 보이지 않는다. */
+.model-pick select,
+.model-pick select option { cursor: pointer; }
+.model-pick select option { padding: 5px 6px; }
+.model-pick select option:hover { background: var(--bg-hover, #26262c); }
+.model-pick select option:checked { background: var(--accent, #6366f1); color: #fff; }
+
 /* ── 버튼 ─────────────── */
 .btn-primary {
   background: linear-gradient(180deg, var(--accent), var(--accent-hover));
@@ -470,6 +509,11 @@ select option { background: var(--bg-elev); color: var(--text-main); }
   margin-top: 4px;
   line-height: 1.5;
 }
+/* 준비가 더 필요한 경로에 붙는 한 줄. 겁주지 않되 고르기 전에 보이게 — 조금 더 흐리게. */
+.brain-card-note {
+  opacity: .72;
+  font-size: 11.5px;
+}
 
 .brain-badge {
   border-radius: var(--radius-pill);
@@ -480,11 +524,17 @@ select option { background: var(--bg-elev); color: var(--text-main); }
 .brain-badge.recommended { background: var(--accent); color: #fff; }
 .brain-badge.tryit { background: var(--bg-subtle); border: 1px solid var(--border-strong); color: var(--text-sub); }
 
-/* 내보내기 옵션 카드: 텍스트·박스 + 블록 사이 간격을 더 여유롭게 (온보딩 두뇌 카드엔 영향 없음) */
-#export-scope-options { gap: 12px; margin-top: 16px; margin-bottom: 18px; }
-#export-scope-options .brain-card { padding: 20px 22px; }
-#export-scope-options .brain-card-desc { margin-top: 9px; }
+/* 내보내기 — 범위 선택 카드(#export-scope-options)는 두지 않는다(항상 전부 담는다) */
 .export-secure { margin-bottom: 18px; }
+/* 무엇이 담기는지 알리는 안내 — 고르게 하는 대신 알려준다 */
+.export-notice {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-subtle);
+  line-height: 1.6;
+}
 
 /* 능력 화면: 섹션 내부 수직 간격을 더 여유롭게 (설정 화면엔 영향 없음) */
 #screen-abilities .settings-section-title { margin-bottom: 14px; }
@@ -1309,6 +1359,7 @@ select option { background: var(--bg-elev); color: var(--text-main); }
   position: relative;
   width: 100%;
   max-width: 720px;          /* 기본(설정) */
+  /* ⚠️ 깜박임을 잡으려 `min-height` 를 넣어도 소용없다 — 높이 출렁임이 원인이 아니다. */
   height: auto;
   max-height: 100%;
   background: var(--bg-elev);
@@ -1420,7 +1471,7 @@ select option { background: var(--bg-elev); color: var(--text-main); }
 }
 .settings-section:hover { border-color: var(--border-strong); }
 
-/* ── 설정 탭 (2026-07-08 UI 개편: 8섹션 세로나열 → 4탭 분류) ───────────────── */
+/* ── 설정 탭 (8섹션 세로나열이 아니라 4탭 분류) ───────────────────────── */
 .settings-tabs {
   display: flex;
   gap: 4px;
@@ -1452,7 +1503,7 @@ select option { background: var(--bg-elev); color: var(--text-main); }
 .tab-panel { display: none; flex-direction: column; gap: 24px; }
 .tab-panel.active { display: flex; animation: modal-card-in 0.18s ease; }
 
-/* ── 접이식 능력 섹션 (2026-07-08: 환경점검·스킬·MCP 기본 접힘) ───────────────── */
+/* ── 접이식 능력 섹션 (환경점검·스킬·MCP 기본 접힘) ───────────────────── */
 details.acc > summary {
   cursor: pointer;
   list-style: none;
@@ -1479,7 +1530,8 @@ details.acc:hover { border-color: var(--border-strong); }
   font-size: 12.5px;
   color: var(--text-sub);
   font-weight: 700;
-  text-transform: uppercase;
+  /* uppercase 금지 — 브랜드 표기를 망가뜨린다(Auxo → AUXO).
+     개별 제목마다 text-transform:none 을 붙여 막던 것을 여기서 근본적으로 끈다. */
   letter-spacing: 0.5px;
   margin-bottom: 12px;
   display: flex;
@@ -1800,7 +1852,7 @@ details.acc:hover { border-color: var(--border-strong); }
 }
 .ability-base-list li b { color: var(--text-main); }
 .ability-ic { display: inline-block; width: 20px; text-align: center; }
-/* 환경 점검 상태줄 (2026-07-09: 독립 섹션 → 스킬·MCP 탭 위 얇은 줄)
+/* 환경 점검 상태줄 (독립 섹션이 아니라 스킬·MCP 탭 위 얇은 줄)
    정상이면 한 줄로 접혀 있고, 빠진 프로그램이 있으면 경고색으로 펼쳐진다. */
 .env-bar {
   background: var(--bg-subtle);
@@ -1828,17 +1880,6 @@ details.acc:hover { border-color: var(--border-strong); }
 .env-bar-warn > summary:hover::after { background-color: var(--danger); }
 .env-bar .settings-skills-list { margin-bottom: 10px; }
 
-/* Antigravity 안내(리스크·스킬 미지원) — 눈에 띄되 과하지 않게 */
-.agy-notice {
-  background: rgba(240, 176, 64, 0.10);
-  border: 1px solid rgba(240, 176, 64, 0.38);
-  border-radius: 10px;
-  padding: 11px 14px; margin: 10px 0;
-  font-size: 13px; line-height: 1.55;
-}
-.agy-notice-title { font-weight: 600; margin-bottom: 5px; }
-.agy-notice ul { margin: 0; padding-left: 17px; }
-.agy-notice li { margin: 3px 0; }
 
 /* 채팅 마크다운 렌더(에이전트 답변) — 표·굵게·목록·인용·코드·링크를 보기 좋게 */
 .bubble .md-p { margin: 0; }
