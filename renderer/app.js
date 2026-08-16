@@ -2301,6 +2301,13 @@ function 업데이트상태그리기(s) {
   if (cur && s.current) cur.textContent = `지금 버전 v${s.current}`;
   const el = document.getElementById('settings-update-state');
   if (el && s.text) el.textContent = s.text;
+  // ★설정 화면은 사용자가 **찾아 들어가야** 보인다. 켠 직후 받는 중이라면
+  //   곧 앱이 닫혔다 열릴 텐데, 그걸 설정 안에만 적어두면 아무도 못 본다.
+  //   받는 중일 때는 늘 보이는 자리(사이드바 버전)에도 같은 것을 적는다.
+  if (s.stage === 'downloading') {
+    const v = document.getElementById('sidebar-version');
+    if (v) v.textContent = s.text || '새 버전을 받는 중이에요';
+  }
 }
 
 /** 업데이트 설치 중임을 스플래시에 띄우고 그대로 둔다. 곧 앱이 닫혔다 새 버전으로 다시 열린다. */
@@ -2309,7 +2316,7 @@ function 설치안내(version) {
   const sp = document.getElementById('splash');
   if (sp) { sp.style.display = ''; sp.classList.remove('splash-hide'); }
   const note = document.getElementById('splash-note');
-  if (note) note.textContent = `새 버전 ${version ? 'v' + version + ' ' : ''}으로 바꾸고 있어요.\n잠시 후 자동으로 다시 열립니다. 창을 닫지 말고 기다려 주세요.`;
+  if (note) note.textContent = `새 버전 ${version ? 'v' + version + ' ' : ''}으로 바꾸고 있어요.\n이 창이 닫히고 설치 진행 화면이 뜹니다. 누르실 것은 없습니다.\n끝나면 새 버전으로 저절로 다시 열립니다.`;
 }
 
 (async function init() {
@@ -2328,13 +2335,16 @@ function 설치안내(version) {
     const el = document.getElementById('sidebar-version');
     if (el && info && info.version) el.textContent = `v${info.version} · 로컬 실행 중`;
   } catch (_) {}
-  // 새 버전을 다 받아두면 **그 사실을 알려준다.** 설치는 여전히 끌 때 조용히 하지만,
+  // 새 버전을 다 받아두면 **그 사실을 알려준다.**
   //   "받아둔 게 있다"는 것조차 안 보이면 사용자는 업데이트가 도는지 알 수 없다.
   //   (0.2.1~0.2.3 이 업데이트 불능으로 나갔을 때 아무도 눈치채지 못한 이유이기도 하다)
+  //   ★문구는 **실제 동작과 같아야 한다.** 끌 때가 아니라 **다시 켤 때** 바뀐다(main.js 지금설치).
+  //   0.2.10 까지 "끄면 설치돼요" 라고 잘못 안내했다 — 끄면 아무 일도 안 일어나므로
+  //   사용자는 "끄라길래 껐는데 왜 그대로냐" 가 된다.
   try {
     window.agentAPI.onUpdateReady((d) => {
       const el = document.getElementById('sidebar-version');
-      if (el) el.textContent = `v${(d && d.version) || ''} 준비됨 · 앱을 끄면 설치돼요`;
+      if (el) el.textContent = `v${(d && d.version) || ''} 준비됨 · 다음에 켤 때 바뀌어요`;
     });
     window.agentAPI.onUpdateState((s) => 업데이트상태그리기(s));
   } catch (_) {}

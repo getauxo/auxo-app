@@ -146,8 +146,12 @@ function cleanupUpdaterCache() {
       if ((받아둔[i] || 0) < (지금[i] || 0)) break;    // 옛 버전 잔여물 — 지운다
     }
     fs.rmSync(path.join(dir, 'pending'), { recursive: true, force: true });
-    try { fs.rmSync(path.join(dir, 'installer.exe'), { force: true }); } catch (_) {}
-    logError('updater', { message: `설치 끝난 잔여물 정리 (${name})` });
+    // ★installer.exe 는 **지우지 않는다.** electron-updater 가 다음 업데이트 때
+    //   이 파일을 옛 버전으로 삼아 **바뀐 블록만** 받는다(AppUpdater.differentialDownloadInstaller
+    //   → oldFile = <캐시>/installer.exe). 0.2.13 까지 이걸 지우고 있었고,
+    //   그래서 코드 몇 줄만 바뀐 판에도 매번 275MB 를 통째로 받았다(실측 2026-08-16).
+    //   용량은 이 파일 하나(약 275MB)로 고정된다 — 쌓이지 않으므로 그대로 둔다.
+    logError('updater', { message: `설치 끝난 잔여물 정리 (${name}) — 차등 업데이트용 installer.exe 는 남긴다` });
   } catch (e) { logError('updater:cleanup', e); }
 }
 
@@ -162,6 +166,18 @@ function cleanupUpdaterCache() {
 //   0.2.1~0.2.3 이 업데이트 불능으로 나갔는데도 아무도 눈치채지 못한 이유가 이것이다(2026-08-16).
 let _updater = null;
 let _updateState = { stage: 'idle', text: '아직 확인하지 않았어요', version: null };
+// 이번 실행에서 사용자가 **말을 건 적이 있나.** 업데이트를 지금 설치해도 되는지의 유일한 기준이다.
+//   한 번이라도 보냈으면 다시 false 로 돌아가지 않는다 — 답을 기다리는 중일 수도, 읽는 중일 수도 있다.
+let _대화시작 = false;
+//   ★앱 화면만 보지 않는다. 텔레그램·디스코드가 붙어 있으면 사용자는 **다른 창에서** 대화 중일 수 있고,
+//   그쪽은 우리가 입력을 볼 수 없다. 봇이 돌고 있으면 "쓰는 중" 으로 보고 설치를 미룬다.
+function 대화시작됨() {
+  if (_대화시작) return true;
+  // tgBot·dcBot 은 이 함수보다 아래에서 선언된다. 아직 없을 때 터지지 않게 감싼다.
+  try { if (tgBot && tgBot.running) return true; } catch (_) {}
+  try { if (dcBot && dcBot.running) return true; } catch (_) {}
+  return false;
+}
 
 function setupAutoUpdate() {
   if (!app.isPackaged) { _updateState = { stage: 'skipped', text: '개발 실행 중이라 업데이트는 확인하지 않아요', version: null }; return; }
@@ -182,7 +198,16 @@ function setupAutoUpdate() {
   //   사용자는 아무 안내도 못 받은 채 앱이 망가진 줄 안다.
   //   → 켤 때 설치하면 사용자가 화면 앞에 있고, 안내를 보고 기다린다. 바탕화면을 누를 이유가 없다.
   autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.logger = null;
+  // electron-updater 의 말을 전부 받아 적지는 않되(로그가 사용자 PC 에 쌓인다),
+  //   **차등 다운로드가 실제로 먹었는지**는 남긴다. 이걸 껐던 탓에
+  //   "매번 275MB 를 통째로 받고 있다"는 사실을 오래 못 봤다(2026-08-16).
+  const 차등말 = /block ?map|differential|changed blocks|fallback to full/i;
+  autoUpdater.logger = {
+    info: (m) => { const s = String(m); if (차등말.test(s)) logError('updater:diff', { message: s }); },
+    warn: (m) => { const s = String(m); if (차등말.test(s)) logError('updater:diff', { message: s }); },
+    error: (m) => logError('updater:diff', { message: String(m) }),
+    debug: () => {},
+  };
 
   const say = (m) => { try { logError('updater', { message: m }); } catch (_) {} };
   const send = (ev, data) => {
@@ -195,22 +220,37 @@ function setupAutoUpdate() {
     send('update:state', _updateState);
   };
 
-  // 이번 실행에서 실제로 내려받았나. 한 조각이라도 받았으면 **사용자가 쓰는 도중**이라는 뜻이다.
-  // 받은 적 없는데 '다 받음'이 오면 = **지난번에 받아둔 것**이므로 지금 설치해도 방해가 아니다.
+  // 받자마자 바꿀 것인가, 다음에 켤 때로 미룰 것인가 —
+  //   기준은 "이번에 받았나" 가 아니라 **사용자가 이미 말을 걸었나** 다.
+  //   ★원칙(마스터 결정 2026-08-16): **앱 창이 열린 뒤로는 업데이트가 앱을 닫지 않는다.**
+  //   설치는 오직 "켤 때, 창을 쓰기 전" 한 자리에서만 일어난다.
+  //
+  //   한때 "아직 말을 안 걸었으면 지금 설치" 로 했다가 되돌렸다. 말을 안 걸어도
+  //   지난 대화를 읽거나 설정을 보는 중일 수 있고, 그때 앱이 갑자기 닫힌다.
+  //   "말을 걸었나" 는 **쓰는 중인지의 기준이 못 된다.**
+  //
+  //   그래서 갈림길은 **이번 실행에서 받았나** 다:
+  //     · 한 조각이라도 받았다 → 사용자는 이미 앱을 보고 있다 → 손대지 않고 다음에 켤 때.
+  //     · 받은 적 없는데 '다 받음' 이 왔다 → **지난번에 받아둔 것** → 지금이 그 "켤 때" 다.
+  //   후자는 창이 아직 스플래시라(renderer 의 update:pending 확인) 사용자가 쓰던 것을 뺏지 않는다.
+  //   대화시작됨() 은 그 위에 한 겹 더 두는 안전장치다 — 텔레그램·디스코드가 붙어 있을 때도 막는다.
   let 이번에받음 = false;
 
   autoUpdater.on('checking-for-update', () => 알림('checking', '새 버전이 있는지 확인하는 중이에요'));
   autoUpdater.on('update-available', (i) => 알림('downloading', `새 버전 ${i && i.version} 을 받는 중이에요`, i && i.version));
   autoUpdater.on('update-not-available', () => 알림('latest', '최신 버전을 쓰고 계세요'));
-  autoUpdater.on('download-progress', (p) => { 이번에받음 = true; 알림('downloading', `새 버전을 받는 중이에요 ${Math.round((p && p.percent) || 0)}%`); });
+  autoUpdater.on('download-progress', (p) => {
+    이번에받음 = true;   // 이 순간부터 이번 실행에서는 설치하지 않는다
+    알림('downloading', `새 버전을 받는 중이에요 ${Math.round((p && p.percent) || 0)}% — 다음에 켤 때 바뀝니다`);
+  });
   autoUpdater.on('update-downloaded', (i) => {
     const v = (i && i.version) || '';
-    if (!이번에받음) {
-      // 켜자마자 '다 받아둔 게 있다' → 지금 바꾼다. 사용자는 방금 앱을 켰으니 기다릴 준비가 돼 있다.
+    if (!이번에받음 && !대화시작됨()) {
+      // 지난번에 받아둔 것 + 아직 창을 쓰기 전 → **지금이 바꿀 자리다.**
       알림('installing', `새 버전 ${v} 으로 바꾸는 중이에요`, v);
       지금설치(v);
     } else {
-      // 쓰는 도중에 다 받았다 → **건드리지 않는다.** 다음에 켤 때 바꾼다.
+      // 이번에 받았거나(=앱을 보고 있다) 다른 채널이 붙어 있다 → **절대 건드리지 않는다.**
       알림('ready', `새 버전 ${v} 준비됐어요 — 다음에 앱을 켤 때 바뀝니다`, v);
       send('update:ready', { version: v });
     }
@@ -222,7 +262,15 @@ function setupAutoUpdate() {
 
 // 받아둔 새 버전으로 **지금** 바꾼다.
 //   화면에 먼저 알리고 잠깐 보여준 뒤 종료·설치·재실행까지 electron-updater 에 맡긴다.
-//   (isSilent=true: 설치 마법사를 띄우지 않는다 / isForceRunAfter=true: 끝나면 새 버전으로 다시 연다)
+//   isForceRunAfter=true: 끝나면 새 버전으로 다시 연다.
+//   ★isSilent=false: `/S` 를 빼서 **설치 진행 화면을 사용자에게 보여준다.**
+//   true 면 설치가 끝날 때까지 화면에 아무것도 없어(실측 20~90초) 앱이 죽은 줄 안다.
+//   ★이 값은 nsis.oneClick:true 와 **한 쌍이다.** oneClick 이 아니면(assisted)
+//   위치선택은 건너뛰어도 **완료("마침") 화면**에서 클릭을 기다리며 멈춘다
+//   — assistedInstaller.nsh 의 MUI_PAGE_FINISH 에는 skipPageIfUpdated 가 없다.
+//   0.2.12 가 그래서 설치를 못 끝냈다. oneClick.nsh 는 MUI_PAGE_INSTFILES 하나뿐이라
+//   **진행바만 뜨고 클릭 없이 끝난다**(0.2.17→0.2.18 실측: 창 뜸·클릭 0·4초 내 완료·앱 자동 실행).
+//   → package.json 의 nsis.oneClick 을 false 로 되돌린다면 이 값도 반드시 true 로 함께 되돌린다.
 function 지금설치(version) {
   try {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -233,7 +281,7 @@ function 지금설치(version) {
   logError('updater', { message: `켤 때 설치 시작 (${version}) — 끝나면 새 버전으로 다시 열린다` });
   정상종료표시('업데이트 설치');   // 이 종료는 사고가 아니다 — 비정상 종료로 기록되지 않게 한다
   setTimeout(() => {
-    try { _updater.quitAndInstall(true, true); }
+    try { _updater.quitAndInstall(false, true); }
     catch (e) { logError('updater', { message: '설치 시작 실패: ' + ((e && e.message) || e) }); }
   }, 2500);   // 안내를 읽을 시간
 }
@@ -873,7 +921,10 @@ const pickGenerate = engine.pickGenerate;
 // 메시지 전송 (LLM 두뇌: claude 구독 / gemini api / …)
 // 같은 에이전트의 대화는 한 번에 하나씩 처리한다.
 // 사용자가 답을 기다리지 않고 말을 이어 붙여도, 뒤 메시지는 앞 답변까지 본 뒤 처리된다.
-ipcMain.handle('chat:send', async (e, payload) => handleChatSend(e, payload));
+ipcMain.handle('chat:send', async (e, payload) => {
+  _대화시작 = true;   // 이 순간부터 업데이트 설치로 앱을 닫지 않는다(설치는 다음에 켤 때)
+  return handleChatSend(e, payload);
+});
 
 // 진행 중 턴의 취소 핸들(agentId → AbortController). 정지 버튼/ESC 가 이걸 abort 한다.
 const _inflightTurns = new Map();
