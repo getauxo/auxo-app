@@ -1,0 +1,110 @@
+# ── 의존성·빌드 산출물 ─────────────────────────────
+node_modules/
+dist/
+dist-pkg/
+*.zip
+
+# ── 민감 정보 (절대 커밋 금지) ─────────────────────
+.env
+# ★두뇌별 키 파일은 이름이 제각각이라 **패턴으로** 막는다.
+#   두뇌를 추가할 때마다 여기를 고쳐야 하는 구조면 언젠가 빠뜨린다.
+#   이름을 예측해 막는 건 한계가 있으므로 구분자·표기(하이픈·언더스코어)를 모두 덮고,
+#   **내용 기반 차단**(pre-commit)을 같이 둔다.
+*-api-key
+*api-key*
+*api_key*
+*apikey*
+*_key.txt
+*-key.txt
+gemini-api-key.txt
+*token*
+telegram-bot.json
+discord-bot.json
+office-token
+*.분신.json
+oauth*.json
+*-creds.json
+
+# ── 런타임 데이터·사용자 데이터·로그 ───────────────
+*.log
+*.err
+evidence/
+skills/
+mcp-servers.json
+agentlink-data*.json
+*.backup*
+download/
+outbox-*.json
+
+# ── 상대경로 별칭버그로 생긴 잔재 폴더 ─────────────
+/~/
+/바탕화면/
+
+# ── 회귀 테스트는 **전부 백업한다** (2026-08-07 근본 수정) ──────────
+#   이 저장소(getauxo/Auxo)는 **비공개 작업실**이다. 사용자에게 나가는 건
+#   package.json 의 build.files 가 이미 막는다(`!test-*.js` 등) —
+#   **설치본에서 빼는 것과 백업에서 빼는 것은 다른 문제인데 여기서 뭉뚱그려져 있었다.**
+#
+#   그 결과: 2026-07-31 에 예외 4개를 뚫었지만 나머지 **16개가 조용히 백업 밖**이었고,
+#   새로 만드는 테스트도 자동으로 빠졌다(2026-08-07 `test-silent-death.js` 가 그렇게 누락됨).
+#   회귀 테스트는 자산이다 — 없으면 다음에 같은 결함을 다시 만든다.
+#   → `test-*.js` 통짜 무시를 **없앤다.** 아래엔 진짜 일회성만 남긴다.
+#
+#   ⚠️ gitignore 는 **인라인 주석을 지원하지 않는다.** 패턴 뒤에 `# 설명`을 붙이면
+#      그 전체가 파일명으로 해석돼 규칙이 조용히 무효가 된다(2026-07-31 실제로 당함).
+
+# ── 일회성 스파이크·진단 스크립트 (남길 가치 없음) ──
+*-test.js
+smoke*.js
+# ★예외: smoke-capture.js 는 **남길 가치가 있다** — 앱 화면 23장을 찍는 검증 도구이고 main.js 가 require 한다.
+#   2026-08-13 에 main.js 에서 분리하며 `smoke*` 이름을 골랐는데(배포·공개 제외 규칙에 태우려고),
+#   여기 "버리는 것" 규칙에도 같이 걸려 **작업실 백업조차 안 되고 있었다.** 이름 지을 때 이 줄을 못 봤다.
+#   ※ 배포·공개 제외는 그대로다 — package.json build.files 의 `!smoke*.js` 와
+#     .gitattributes 의 export-ignore 는 별개 규칙이라 이 예외의 영향을 안 받는다.
+!smoke-capture.js
+mcp-spike*.js
+diag-*.js
+_migtest.js
+!test-episodes.js
+!test-layer1.js
+!test-layer2.js
+!test-layer3.js
+!test-capability.js
+# 내보내기→가져오기 왕복 검사. "기억은 사용자 것"을 지키는 유일한 검사라 백업한다.
+#   (공개엔 안 나간다 — .gitattributes 에서 따로 뺐다)
+!roundtrip-test.js
+
+# ── OS·에디터 ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+.patch-backup-*/
+
+# 개발용 CLI 테스트 데이터 폴더
+cli-test-*/
+
+# 로컬 임베딩 모델(약 189MB) — git 에 넣으면 repo 가 비대해지고 clone 이 느려진다.
+# 설치본에는 포함된다(package.json build.files 의 **/*). 준비: npm run prepare-model (pack/dist 가 자동 실행)
+models/
+
+# 배포 자산 staging (릴리스에 수동 업로드, 커밋 안 함)
+release-staging/
+
+# 일회성 패치·백업 스크립트, 도구 산출물
+_patch*.js
+_rm-*.js
+.playwright-mcp/
+*.bak-*
+landing-*.png
+
+#   ── 2026-08-03 오후: 프롬프트 전수 검사에서 나온 두 가지 ──
+#   test-claim-check  정직 계층 ⑤: "했다"고 말했는데 도구를 안 부른 턴을 잡는가(J-3 재발 방지)
+#   test-lazy-tools   도구 지연 로딩: 조용히 실패하는 도구(기억)는 항상 싣는가 · MCP 깔아도 안 커지는가
+!test-claim-check.js
+!test-lazy-tools.js
+
+# 실행 로그 산출물 (2026-08-11) — 백업에도 안 남긴다
+*.out
+*.err2
+
+# 임시 검증 스크립트(_로 시작) — 커밋에 딸려가는 일이 반복됐다(2026-08-15 두 번)
+_*.js

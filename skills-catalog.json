@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "name": "Auxo 스킬 카탈로그 (부트스트랩)",
+    "version": "0.1",
+    "compiledAt": "2026-06-18",
+    "source": "anthropics/skills (github.com/anthropics/skills) — 신뢰 출처(공식 Anthropic)",
+    "notes": [
+      "신생 생태계라 완성된 스킬 마켓은 아직 없음 → 신뢰 출처(Anthropic 공식)부터 큐레이션.",
+      "라이선스: 대부분 Apache-2.0(자유). docx/pdf/pptx/xlsx는 source-available(오픈소스 아님) → 우리 카탈로그에선 '링크/참고'만, 재배포·번들 금지.",
+      "bundlesCode=true 스킬은 스크립트 동봉형. 현재 Auxo는 '지침형'만 실행하므로, 스크립트는 미실행(지침만 활용) 또는 향후 샌드박스 단계에서 지원.",
+      "install 시 실제 파일을 받아 검증(타입·인젝션 스캔)하는 게 권위 — 이 카탈로그의 분류는 참고값."
+    ],
+    "repoTreeBase": "https://github.com/anthropics/skills/tree/main/skills",
+    "rawBase": "https://raw.githubusercontent.com/anthropics/skills/main/skills"
+  },
+  "skills": [
+    { "id": "brand-guidelines", "name": "브랜드 가이드라인 적용", "description": "회사 브랜딩 기준(톤·표현)을 만든 콘텐츠에 일관 적용", "license": "Apache-2.0", "bundlesCode": false, "auxoReady": true },
+    { "id": "internal-comms", "name": "사내 커뮤니케이션", "description": "조직 내부 공지·소통 문서 작성을 매끄럽게", "license": "Apache-2.0", "bundlesCode": false, "auxoReady": true },
+    { "id": "doc-coauthoring", "name": "문서 공동작성", "description": "문서를 함께 작성·편집하는 협업 절차", "license": "Apache-2.0", "bundlesCode": false, "auxoReady": true },
+    { "id": "frontend-design", "name": "프론트엔드 디자인", "description": "반응형 UI 구축 가이드", "license": "Apache-2.0", "bundlesCode": false, "auxoReady": true },
+    { "id": "claude-api", "name": "Claude API 연동", "description": "Anthropic Claude API 통합 방법 안내", "license": "Apache-2.0", "bundlesCode": false, "auxoReady": true },
+    { "id": "theme-factory", "name": "테마 팩토리", "description": "디자인 테마·색 구성 생성", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": true },
+    { "id": "canvas-design", "name": "캔버스 디자인", "description": "디지털 캔버스 기반 비주얼 디자인 작업", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": false },
+    { "id": "algorithmic-art", "name": "알고리즘 아트", "description": "프로그래밍 기반 알고리즘 비주얼 아트 생성", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": false },
+    { "id": "slack-gif-creator", "name": "Slack GIF 생성", "description": "Slack 공유용 GIF 자동 생성", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": false },
+    { "id": "web-artifacts-builder", "name": "웹 아티팩트 빌더", "description": "독립 실행형 웹 컴포넌트 생성", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": false },
+    { "id": "webapp-testing", "name": "웹앱 테스트", "description": "웹 애플리케이션 테스트 프레임워크 제공", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": false },
+    { "id": "mcp-builder", "name": "MCP 빌더", "description": "Model Context Protocol 서버 생성", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": false },
+    { "id": "skill-creator", "name": "스킬 생성기", "description": "새 커스텀 스킬 제작 도우미", "license": "Apache-2.0", "bundlesCode": true, "auxoReady": false },
+    { "id": "docx", "name": "Word(DOCX) 문서", "description": "Word 문서 생성·편집", "license": "source-available", "bundlesCode": true, "auxoReady": false },
+    { "id": "pdf", "name": "PDF 처리", "description": "PDF 생성·폼 필드 추출", "license": "source-available", "bundlesCode": true, "auxoReady": false },
+    { "id": "pptx", "name": "PowerPoint(PPTX)", "description": "프레젠테이션 생성·편집", "license": "source-available", "bundlesCode": true, "auxoReady": false },
+    { "id": "xlsx", "name": "Excel(XLSX)", "description": "스프레드시트 생성·편집", "license": "source-available", "bundlesCode": true, "auxoReady": false }
+  ]
+}
