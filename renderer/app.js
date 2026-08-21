@@ -31,12 +31,32 @@ function showScreen(id) {
 const SPLASH_START = Date.now();
 // 업데이트를 설치하는 중이면 스플래시를 걷지 않는다 — 곧 앱이 닫혔다가 새 버전으로 다시 열린다.
 let 설치중 = false;
+// 업데이트가 정리될 때까지 스플래시를 붙잡아 둔다.
+//   ★왜: 정한 그림(2026-08-16) = "앱을 종료했다가 다시 실행할 때 자동 업데이트되면서
+//     그때 진행바가 보이는 상태였다가 완료되면 앱이 실행되는 것".
+//     스플래시가 먼저 걷혀 버리면 그 그림이 안 된다 — 받는 도중에 창이 열리고,
+//     이번 실행에서는 못 바꾸고 다음으로 밀린다. 그래서 **두 번 켜야** 새 버전이 됐다.
+//   ⚠️ 무한정 기다리지 않는다 — 네트워크가 느리거나 죽으면 앱을 못 쓰게 된다.
+//     최대 45초. 그 안에 못 끝나면 그냥 열고, 받아둔 것은 다음 실행에서 쓴다.
+let _업데이트상태 = null;              // main 이 보내주는 지금 상태(update:state)
+const _스플래시대기시작 = Date.now();
+const 스플래시대기상한 = 45000;
+function 업데이트정리중() {
+  if (Date.now() - _스플래시대기시작 > 스플래시대기상한) return false;
+  const st = _업데이트상태 && _업데이트상태.stage;
+  return st === 'checking' || st === 'downloading' || st === 'installing';
+}
 function hideSplash() {
   if (설치중) return;
   const el = document.getElementById('splash');
   if (!el || el.style.display === 'none') return;
+  // 업데이트가 도는 중이면 끝날 때까지 기다렸다가 다시 시도한다.
+  if (업데이트정리중()) { setTimeout(hideSplash, 400); return; }
   const wait = Math.max(0, 900 - (Date.now() - SPLASH_START)); // 빠른 PC도 최소 0.9초는 보이게
   setTimeout(() => {
+    if (설치중 || 업데이트정리중()) { setTimeout(hideSplash, 400); return; }   // 기다리는 사이 시작됐을 수 있다
+    // ★여기서부터 사용자가 앱 화면을 본다 — main 에 알려 업데이트가 손대지 않게 한다.
+    try { window.agentAPI.updateWindowOpen(); } catch (_) {}
     el.classList.add('splash-hide');
     setTimeout(() => { el.style.display = 'none'; }, 520); // CSS 페이드(.5s) 후 완전히 제거
   }, wait);
@@ -2304,6 +2324,14 @@ function 업데이트상태그리기(s) {
   // ★설정 화면은 사용자가 **찾아 들어가야** 보인다. 켠 직후 받는 중이라면
   //   곧 앱이 닫혔다 열릴 텐데, 그걸 설정 안에만 적어두면 아무도 못 본다.
   //   받는 중일 때는 늘 보이는 자리(사이드바 버전)에도 같은 것을 적는다.
+  // ★스플래시가 아직 떠 있으면 **거기에** 적는다 — 지금은 확인·받기가 스플래시 단계에서 끝나므로
+  //   사용자가 보는 화면이 스플래시다. 사이드바에만 적으면 아무도 못 본다.
+  const sp = document.getElementById('splash');
+  const spNote = document.getElementById('splash-note');
+  if (sp && sp.style.display !== 'none' && spNote && !설치중) {
+    if (s.stage === 'downloading') spNote.textContent = s.text || '새 버전을 받는 중이에요';
+    else if (s.stage === 'checking') spNote.textContent = '새 버전이 있는지 확인하는 중이에요';
+  }
   if (s.stage === 'downloading') {
     const v = document.getElementById('sidebar-version');
     if (v) v.textContent = s.text || '새 버전을 받는 중이에요';
@@ -2323,6 +2351,10 @@ function 설치안내(version) {
   // ★켜자마자 확인한다 — 받아둔 새 버전이 있으면 **스플래시를 걷지 않고** 바로 설치 안내로 간다.
   //   (설치는 main 이 진행한다. 여기서는 사용자가 무슨 일인지 알게만 한다.)
   try {
+    // ★상태를 **가장 먼저** 받는다 — hideSplash 가 이걸 보고 "지금 업데이트 도는 중인가" 를 판단한다.
+    //   이 줄이 뒤에 있으면 스플래시가 판단할 근거 없이 먼저 걷혀 버린다.
+    window.agentAPI.onUpdateState((s) => { _업데이트상태 = s; try { 업데이트상태그리기(s); } catch (_) {} });
+    try { _업데이트상태 = await window.agentAPI.updateState(); } catch (_) {}
     window.agentAPI.onUpdateInstalling((d) => 설치안내(d && d.version));
     const p = await window.agentAPI.updatePending();
     if (p && p.version) 설치안내(p.version);
@@ -2346,7 +2378,7 @@ function 설치안내(version) {
       const el = document.getElementById('sidebar-version');
       if (el) el.textContent = `v${(d && d.version) || ''} 준비됨 · 다음에 켤 때 바뀌어요`;
     });
-    window.agentAPI.onUpdateState((s) => 업데이트상태그리기(s));
+    // (상태 수신은 위 init 맨 앞에서 이미 걸었다 — 스플래시가 그걸 보고 판단한다)
   } catch (_) {}
   try { 업데이트상태그리기(await window.agentAPI.updateState()); } catch (_) {}
   try {

@@ -1,7 +1,7 @@
 {
   "name": "auxo",
   "productName": "Auxo",
-  "version": "0.2.29",
+  "version": "0.2.30",
   "description": "Auxo — 나를 알아가고, 필요할 때 도와주는 AI 친구. 설치형 데스크톱 앱. 데이터 폴더는 dev·배포 모두 %APPDATA%/Auxo (productName 기준).",
   "main": "main.js",
   "engines": {

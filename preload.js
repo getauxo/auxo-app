@@ -71,6 +71,8 @@ contextBridge.exposeInMainWorld('agentAPI', {
   onUpdateState: (callback) => ipcRenderer.on('update:state', (_, data) => callback(data)),
   onUpdateInstalling: (callback) => ipcRenderer.on('update:installing', (_, data) => callback(data)),
   updatePending: () => ipcRenderer.invoke('update:pending'),   // 켜자마자 바꿀 것이 있나
+  // 스플래시를 걷었다고 알린다 — 이 뒤로 업데이트는 앱을 건드리지 않는다.
+  updateWindowOpen: () => ipcRenderer.send('update:window-open'),
   updateState: () => ipcRenderer.invoke('update:state'),   // 지금 어떤 상태인가
   updateCheck: () => ipcRenderer.invoke('update:check'),   // 「지금 확인」 버튼
   // L1: 작업 기억
