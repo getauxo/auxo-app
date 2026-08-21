@@ -940,9 +940,13 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
         //   ★안내는 response 에 바로 붙이지 않고 **따로 담는다.**
         //     아래 "되돌림 되돌리기" 가 response 를 원래 답으로 갈아끼우는데,
         //     바로 붙이면 그때 **정직 안내까지 같이 지워진다.**
+        // ★말투를 함께 넘긴다 — 이 문장은 **두뇌가 아니라 우리 코드가** 쓰는 말이라
+        //   1층 말투 설정이 안 닿는다. 안 넘기면 사용자가 존댓말을 정해뒀는데 여기만 반말이 된다
+        //   (2026-08-21 실사용에서 그렇게 나갔다).
+        const _말투 = agent.userSpeech || agent.speech || '';
         _정직안내 = v.reason === 'request'
-          ? claimCheck.requestFailNotice(v.kind)
-          : claimCheck.failNotice(v.claims);
+          ? claimCheck.requestFailNotice(v.kind, _말투)
+          : claimCheck.failNotice(v.claims, _말투);
         break;
       }
       // 되돌림 문구에 넣을 도구 이름.
@@ -1045,7 +1049,12 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
         const m = String(raw || '').match(/\b(0?\.\d+|1(?:\.0+)?|0)\b/);
         const score = m ? parseFloat(m[0]) : null;
         if (score !== null && score < 0.5) {
-          response += '\n\n(솔직히 덧붙이면, 방금 답 중 일부는 내가 찾은 자료로 완전히 확인하진 못했어. 중요한 내용이면 원래 출처도 같이 확인해줘.)';
+          // ★말투를 지킨다 — 이것도 **우리 코드가 쓰는 말**이라 1층 말투 설정이 안 닿는다.
+          //   (2026-08-21: 정직 계층 ⑤ 안내가 같은 이유로 반말로 나갔다. 여기도 같은 자리다)
+          const _반말 = (agent.userSpeech || agent.speech) === 'casual';
+          response += _반말
+            ? '\n\n(솔직히 덧붙이면, 방금 답 중 일부는 내가 찾은 자료로 완전히 확인하진 못했어. 중요한 내용이면 원래 출처도 같이 확인해줘.)'
+            : '\n\n(솔직히 덧붙이면, 방금 답 중 일부는 제가 찾은 자료로 완전히 확인하지는 못했습니다. 중요한 내용이면 원래 출처도 함께 확인해 주세요.)';
         }
       }
     } catch (_) { /* 검증 실패는 답변에 영향 주지 않음 */ }

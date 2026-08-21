@@ -106,6 +106,21 @@ const DECLS = [
     parameters: { type: 'object', properties: { dir: { type: 'string', description: '만들 폴더 경로' } }, required: ['dir'] },
   },
   {
+    name: 'move_file',
+    description: '파일·폴더를 옮기거나 이름을 바꾼다. 허용된 폴더 안에서만. 이름만 바꿀 때도 이걸 써라 — 셸로 하지 마라. 그 이름이 이미 있으면 실패한다(덮어쓰지 않는다).',
+    parameters: { type: 'object', properties: { from: { type: 'string', description: '지금 경로' }, to: { type: 'string', description: '바꿀 경로(이름만 바꾸려면 같은 폴더에 새 이름)' } }, required: ['from', 'to'] },
+  },
+  {
+    name: 'copy_file',
+    description: '파일·폴더를 복사한다. 폴더면 안의 것까지 함께. 허용된 폴더 안에서만. 그 이름이 이미 있으면 실패한다(덮어쓰지 않는다).',
+    parameters: { type: 'object', properties: { from: { type: 'string', description: '복사할 것' }, to: { type: 'string', description: '복사해 넣을 곳' } }, required: ['from', 'to'] },
+  },
+  {
+    name: 'remove_file',
+    description: '파일·폴더를 지운다. 되돌릴 수 없으므로 **사용자에게 먼저 확인하고** 불러라. 폴더를 지우면 안에 든 것도 함께 사라진다. 허용된 폴더 안에서만.',
+    parameters: { type: 'object', properties: { path: { type: 'string', description: '지울 것' }, confirmed: { type: 'boolean', description: '사용자가 지워도 된다고 분명히 말했으면 true. 안 물어봤으면 넣지 마라' } }, required: ['path'] },
+  },
+  {
     name: 'plan_task',
     description: '큰 작업을 단계별로 분해하고 순차 실행한다(L3). 여러 단계가 필요한 복잡한 작업에. 실행 전 계획을 먼저 제시하고 승인받는다.',
     parameters: { type: 'object', properties: { task: { type: 'string' }, projectId: { type: 'string' }, autoApprove: { type: 'boolean' } }, required: ['task'] },

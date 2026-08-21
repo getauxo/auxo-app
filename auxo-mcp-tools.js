@@ -56,7 +56,7 @@ const READ_DECLS = toolDecls.toMcp(toolDecls.pick([
 
 // 파일 도구(공통층) — REST(agent-tools)와 같은 fs-tools 코어. allowedDirs 안에서만.
 const FILE_DECLS = toolDecls.toMcp(toolDecls.pick([
-  'list_files', 'read_file', 'write_file', 'make_dir', 'search_files', 'send_file',
+  'list_files', 'read_file', 'write_file', 'make_dir', 'move_file', 'copy_file', 'remove_file', 'search_files', 'send_file',
 ]));
 
 // 작업기억(L2) + 자율도 — REST(agent-tools)와 동일 동작을 구독 두뇌에도 노출.
@@ -266,7 +266,7 @@ const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.i
       }
     }
     // 파일 도구 — REST와 동일한 fs-tools 코어. allowedDirs는 매 호출 storage에서 신선하게 로드(grant 직후 반영).
-    else if (name === 'list_files' || name === 'read_file' || name === 'write_file' || name === 'make_dir' || name === 'search_files') {
+    else if (name === 'list_files' || name === 'read_file' || name === 'write_file' || name === 'make_dir' || name === 'move_file' || name === 'copy_file' || name === 'search_files') {
       const a = args || {};
       const ag0 = storage.loadAgent(AGENT_ID) || {};
       const exec = (allowed) => {
@@ -274,6 +274,8 @@ const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.i
         if (name === 'read_file') return fsTools.readFile(allowed, a.path);
         if (name === 'write_file') return fsTools.writeFile(allowed, a.path, a.content);
         if (name === 'make_dir') return fsTools.makeDir(allowed, a.dir);
+        if (name === 'move_file') return fsTools.moveFile(allowed, a.from, a.to);
+        if (name === 'copy_file') return fsTools.copyFile(allowed, a.from, a.to);
         return fsTools.searchFiles(allowed, a.dir, a.query);
       };
       r = exec(ag0.allowedDirs || []);
@@ -296,6 +298,17 @@ const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.i
     else if (name === 'grant_dir' || name === 'grant_shell') {
       // 허용은 사용자만 — 모델은 grant를 직접 못 켠다(엔진이 사용자 답으로만 허용). 방어적 거부.
       r = { error: '폴더·터미널 접근 허용은 사용자만 할 수 있어. 네가 직접 켤 수 없어 — 사용자에게 허락을 구한 뒤 다시 시도해.' };
+    }
+    else if (name === 'remove_file') {
+      // ★지우기는 되돌릴 수 없다 — 허용 폴더 안이어도 **사용자 확인**을 한 번 더 받는다(REST 경로와 동일).
+      //   이 파일은 agent 객체를 안 들고 다닌다 — 매 호출 storage 에서 신선하게 읽는다(grant 직후 반영).
+      const a2 = args || {};
+      const ag2 = storage.loadAgent(AGENT_ID) || {};
+      if (!a2.confirmed && ag2.trustLevel !== 'autonomous') {
+        r = { needConfirm: true, message: '지우는 건 되돌릴 수 없어. 사용자에게 무엇을 지울지 정확히 말하고 "지워도 될까요?"라고 물어봐. 허락하면 confirmed:true 로 다시 불러.' };
+      } else {
+        r = fsTools.removeFile(ag2.allowedDirs || [], a2.path);
+      }
     }
     else if (name === 'run_shell') {
       const ag = storage.loadAgent(AGENT_ID) || {};

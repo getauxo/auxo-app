@@ -39,7 +39,7 @@ function buildAvailableTools({ toolsOn, webOn, multimodalOn, pdfOn, mcpDecls = [
     // 이 PC에서 실제 실행 가능한 코드 언어만 안내(없는 언어를 고르지 않게). 예: 보통 node만.
     let codeHint = '코드 실행(run_code — python/node/bash, 긴 코드에 편함)';
     try { const a = procTools.availableLangs(); const u = Object.keys(a).filter(k => a[k]); if (u.length) codeHint = `코드 실행(run_code — 이 PC에선 ${u.join('·')}로 실행돼. 다른 언어는 안 되니 이 중에서 골라. 긴 코드에 편함)`; } catch (_) {}
-    availableTools.push('중요한 것 기억하기(remember — 대화 중 알게 된 사용자 사실·선호를 직접 장기기억에 저장)', '기억 지우기(forget — 사용자가 지워달라고 할 때 특정 기억을 삭제)', '옛 기억·대화 검색(search_memory — "저번에/그때/지난주에 ~한 거", "그 식당·그거 뭐였지"처럼 지금 대화창에 없는 과거를 물으면 지어내지 말고 이걸로 먼저 찾기)', '현재 날짜·시각', '정확한 계산(계산기)', 'URL/데이터 가져오기(fetch)', '새 스킬 찾기·설치(find_skill→승인→install_skill, 신뢰 출처)', '새 도구(MCP) 찾기·설치(find_mcp→승인→install_mcp, 예: 브라우저 자동화·파일·메모리. 인터넷 주소로 접속하는 원격 MCP도 url로 연결 가능)', '설치한 능력 삭제(remove_mcp·uninstall_skill — 사용자가 "그거 지워줘"라고 할 때만)', '승인 정도(자율도) 바꾸기(set_trust — 사용자가 "앞으로 묻지 말고 알아서 해/위험한 것만 물어봐/뭐든 확인해"라고 하면)', '파일 다루기(list_files·read_file·write_file·make_dir·search_files — 허용된 폴더 안에서만, 새 폴더는 사용자 허락 후에만·허락은 사용자만)', '사용자에게 파일 보내기(send_file — 만들었거나 가진 파일을 채팅으로 전달. 사용자가 "그 파일 줘/보내줘"라고 하면 이 도구를 써. 허용폴더 안 파일만. 링크·버튼을 글로 지어내지 말고 반드시 이 도구 호출)', '터미널 명령 실행(run_shell — 허용 폴더에서, 파괴적 명령 차단; 사용 전 사용자 허락 필요)', codeHint, '웹 검색(web_search — 실시간 정보·최신 사실을 인터넷에서 찾기)', '예약·알림(schedule_task — "다음 주 화요일 7시"처럼 특정 날짜 1회도, "매일 9시/매시/N분마다" 반복도; PC 켜진 동안)', '방법 익히기·스킬 만들기(create_skill — 잘 해낸 방법을 저장해 다음에 재사용)', '먼저 안부 묻기 설정(set_heartbeat — "그만/다시 챙겨줘/인사 시간 바꿔")');
+    availableTools.push('중요한 것 기억하기(remember — 대화 중 알게 된 사용자 사실·선호를 직접 장기기억에 저장)', '기억 지우기(forget — 사용자가 지워달라고 할 때 특정 기억을 삭제)', '옛 기억·대화 검색(search_memory — "저번에/그때/지난주에 ~한 거", "그 식당·그거 뭐였지"처럼 지금 대화창에 없는 과거를 물으면 지어내지 말고 이걸로 먼저 찾기)', '현재 날짜·시각', '정확한 계산(계산기)', 'URL/데이터 가져오기(fetch)', '새 스킬 찾기·설치(find_skill→승인→install_skill, 신뢰 출처)', '새 도구(MCP) 찾기·설치(find_mcp→승인→install_mcp, 예: 브라우저 자동화·파일·메모리. 인터넷 주소로 접속하는 원격 MCP도 url로 연결 가능)', '설치한 능력 삭제(remove_mcp·uninstall_skill — 사용자가 "그거 지워줘"라고 할 때만)', '승인 정도(자율도) 바꾸기(set_trust — 사용자가 "앞으로 묻지 말고 알아서 해/위험한 것만 물어봐/뭐든 확인해"라고 하면)', '파일 다루기(list_files·read_file·write_file·make_dir·move_file·search_files — 허용된 폴더 안에서만, 새 폴더는 사용자 허락 후에만·허락은 사용자만. **이름 바꾸기·옮기기는 move_file 이다 — 셸로 하지 마라**)', '사용자에게 파일 보내기(send_file — 만들었거나 가진 파일을 채팅으로 전달. 사용자가 "그 파일 줘/보내줘"라고 하면 이 도구를 써. 허용폴더 안 파일만. 링크·버튼을 글로 지어내지 말고 반드시 이 도구 호출)', '터미널 명령 실행(run_shell — 허용 폴더에서, 파괴적 명령 차단; 사용 전 사용자 허락 필요)', codeHint, '웹 검색(web_search — 실시간 정보·최신 사실을 인터넷에서 찾기)', '예약·알림(schedule_task — "다음 주 화요일 7시"처럼 특정 날짜 1회도, "매일 9시/매시/N분마다" 반복도; PC 켜진 동안)', '방법 익히기·스킬 만들기(create_skill — 잘 해낸 방법을 저장해 다음에 재사용)', '먼저 안부 묻기 설정(set_heartbeat — "그만/다시 챙겨줘/인사 시간 바꿔")');
   }
   if (multimodalOn) availableTools.push(pdfOn ? '이미지·문서(PDF) 보기(사용자가 첨부한 파일을 직접 보고 이해)' : '이미지 보기(사용자가 첨부한 이미지를 직접 보고 이해)');
   if (mcpDecls.length > 0) availableTools.push(`연결된 MCP 도구: ${mcpDecls.map(d => d.name).join(', ')}`);
@@ -56,7 +56,7 @@ function buildDecls({ skillCatalog = [], mcpDecls = [], deferred = true }) {
     'find_skill', 'install_skill', 'install_skill_web', 'uninstall_skill', 'create_skill',
     'find_mcp', 'install_mcp', 'remove_mcp',
     'set_trust', 'set_heartbeat',
-    'list_files', 'read_file', 'write_file', 'make_dir', 'search_files', 'send_file',
+    'list_files', 'read_file', 'write_file', 'make_dir', 'move_file', 'copy_file', 'remove_file', 'search_files', 'send_file',
     'run_shell', 'run_code', 'web_search',
     'schedule_task', 'list_schedules', 'cancel_schedule',
     'start_project', 'start_routine', 'switch_work', 'close_project', 'plan_task', 'resume_task',
@@ -296,12 +296,14 @@ function makeExecute(ctx) {
       } catch (e) { return { error: '파일 전송 실패: ' + e.message }; }
     }
     // ── 파일 도구(공통층, fs-tools 코어 호출) — allowedDirs 안에서만 ──
-    if (n === 'list_files' || n === 'read_file' || n === 'write_file' || n === 'make_dir' || n === 'search_files') {
+    if (n === 'list_files' || n === 'read_file' || n === 'write_file' || n === 'make_dir' || n === 'move_file' || n === 'copy_file' || n === 'search_files') {
       const exec = (allowed) => {
         if (n === 'list_files') return fsTools.listFiles(allowed, args.dir);
         if (n === 'read_file') return fsTools.readFile(allowed, args.path);
         if (n === 'write_file') return fsTools.writeFile(allowed, args.path, args.content);
         if (n === 'make_dir') return fsTools.makeDir(allowed, args.dir);
+        if (n === 'move_file') return fsTools.moveFile(allowed, args.from, args.to);
+        if (n === 'copy_file') return fsTools.copyFile(allowed, args.from, args.to);
         return fsTools.searchFiles(allowed, args.dir, args.query);
       };
       let r = exec((agent && agent.allowedDirs) || []);
@@ -326,6 +328,15 @@ function makeExecute(ctx) {
     if (n === 'grant_dir' || n === 'grant_shell') {
       // 허용은 사용자만 — 모델은 grant를 직접 못 켠다(엔진이 사용자 답으로만 허용). 방어적 거부.
       return { error: '폴더·터미널 접근 허용은 사용자만 할 수 있어. 네가 직접 켤 수 없어 — 사용자에게 허락을 구한 뒤 다시 시도해.' };
+    }
+    if (n === 'remove_file') {
+      // ★지우기는 되돌릴 수 없다 — 허용 폴더 안이어도 **사용자 확인**을 한 번 더 받는다.
+      //   "쓸 수 있다" 와 "없애도 된다" 는 같은 말이 아니다.
+      const auto = agent && agent.trustLevel === 'autonomous';
+      if (!args.confirmed && !auto) {
+        return { needConfirm: true, message: '지우는 건 되돌릴 수 없어. 사용자에게 무엇을 지울지 정확히 말하고 "지워도 될까요?"라고 물어봐. 허락하면 confirmed:true 로 다시 불러.' };
+      }
+      return fsTools.removeFile((agent && agent.allowedDirs) || [], args.path);
     }
     if (n === 'run_shell') {
       const auto = agent && agent.trustLevel === 'autonomous';

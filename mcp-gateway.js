@@ -59,6 +59,11 @@ async function _startGateway(agentId, server) {
           //   ⚠️ 기록은 **곁다리다.** 실패해도 도구 호출은 그대로 나가야 한다 —
           //      장부 때문에 사용자의 작업이 깨지면 그게 더 나쁘다.
           const _이름 = r.params.name;
+          // 진단용(AUXO_GW_LOG): **어떤 인자로** 불렀는지까지 본다.
+          //   "도구를 불렀는데 막혔다" 가 권한 문제인지 **두뇌가 엉뚱한 경로를 보낸 것**인지 이걸로 갈린다.
+          if (process.env.AUXO_GW_LOG) {
+            try { console.error(`[gw:${server.id}] → ${_이름} ${JSON.stringify(r.params.arguments || {}).slice(0, 300)}`); } catch (_) {}
+          }
           let _ok = true;
           try {
             const out = await entry.client.callTool({ name: _이름, arguments: r.params.arguments || {} });

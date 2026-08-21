@@ -75,6 +75,43 @@ function isAllowed(allowedDirs, target) {
   return (allowedDirs || []).some(d => _inDir(t, _cmp(d)));
 }
 
+/**
+ * 짧은 주소(상대경로)를 **어느 폴더 기준으로 풀지** 고른다.
+ *
+ * ★왜 필요한가 (2026-08-21 실측):
+ *   지금까지 짧은 주소는 **무조건 집(홈) 기준**이었다. 그건 *"바탕화면에 메모 만들어줘"* 를
+ *   받으려고 일부러 그렇게 한 것이고, 그 경우엔 지금도 맞다.
+ *   그런데 짧은 주소가 오는 경우가 **둘**이었다 —
+ *     ① "바탕화면에 있는 거"      → 집 기준          ✅ 되고 있었다
+ *     ② "방금 그 폴더 안에 있는 거" → 허용 폴더 기준   ❌ 통째로 빠져 있었다
+ *   ②가 빠져 있어서 *"옛이름 폴더 이름 바꿔줘"* 가 `C:\Users\<나>\옛이름` 을 찾다 실패했다.
+ *   파일 도구 **9개 전부** 같은 증상이었고, 실패할 때 `needGrant` 로 **집 전체**를 달라고 했다.
+ *
+ * ★넓어지지 않는다 — 후보는 전부 isAllowed 를 통과한 것만 쓴다.
+ *   하나도 못 고르면 **예전 그대로**(집 기준)를 돌려준다 → 오류 문구·동작이 그대로 남는다.
+ */
+function _있나(p) { try { return fs.existsSync(p); } catch (_) { return false; } }
+function _부모있나(p) { try { return fs.statSync(path.dirname(p)).isDirectory(); } catch (_) { return false; } }
+function _별칭으로시작(s) {
+  const seg = String(s).replace(/[\\/]+/g, path.sep).split(path.sep).filter(Boolean)[0];
+  return !!seg && FOLDER_ALIASES.some(a => a.re.test(seg));
+}
+function _pick(allowedDirs, p) {
+  const s = String(p || '').trim();
+  if (!s) return s;
+  const 집기준 = _norm(s);
+  if (path.isAbsolute(s) || /^[a-zA-Z]:/.test(s)) return 집기준;   // 절대경로 → 그대로
+  if (_별칭으로시작(s)) return 집기준;                              // "바탕화면/…" → 사용자가 대놓고 말한 것
+  const 후보 = (allowedDirs || []).map(d => path.resolve(_norm(d), s)).filter(c => isAllowed(allowedDirs, c));
+  // ① 실제로 있는 것부터 — 읽기·이름바꾸기처럼 **이미 있는 대상**을 다루는 경우
+  if (isAllowed(allowedDirs, 집기준) && _있나(집기준)) return 집기준;
+  for (const c of 후보) if (_있나(c)) return c;
+  // ② 없으면 부모가 있는 것 — 새로 만드는 경우(write_file·make_dir·옮길 곳)
+  if (isAllowed(allowedDirs, 집기준) && _부모있나(집기준)) return 집기준;
+  for (const c of 후보) if (_부모있나(c)) return c;
+  return 집기준;                                                    // 못 고르면 예전 그대로
+}
+
 /** 셸 명령 문자열이 보호 경로를 겨냥하는가(best-effort — 셸은 소프트가드, 진짜 격리는 OS 샌드박스=백로그). */
 function commandMentionsProtected(cmd) {
   const s = String(cmd || '');
@@ -91,6 +128,7 @@ function commandMentionsProtected(cmd) {
 }
 
 function listFiles(allowedDirs, dir) {
+  dir = _pick(allowedDirs, dir);
   if (!isAllowed(allowedDirs, dir)) return { error: '허용되지 않은 폴더예요.', needGrant: _norm(dir) };
   try {
     const entries = fs.readdirSync(_norm(dir), { withFileTypes: true });
@@ -99,6 +137,7 @@ function listFiles(allowedDirs, dir) {
 }
 
 function readFile(allowedDirs, file, maxBytes = 200000) {
+  file = _pick(allowedDirs, file);
   if (!isAllowed(allowedDirs, file)) return { error: '허용되지 않은 경로예요.', needGrant: _norm(file) };
   try {
     const buf = fs.readFileSync(_norm(file));
@@ -107,6 +146,7 @@ function readFile(allowedDirs, file, maxBytes = 200000) {
 }
 
 function writeFile(allowedDirs, file, content) {
+  file = _pick(allowedDirs, file);
   if (!isAllowed(allowedDirs, file)) return { error: '허용되지 않은 경로예요.', needGrant: _norm(file) };
   try {
     fs.mkdirSync(path.dirname(_norm(file)), { recursive: true });
@@ -116,13 +156,125 @@ function writeFile(allowedDirs, file, content) {
 }
 
 function makeDir(allowedDirs, dir) {
+  dir = _pick(allowedDirs, dir);
   if (!isAllowed(allowedDirs, dir)) return { error: '허용되지 않은 경로예요.', needGrant: _norm(dir) };
   try { fs.mkdirSync(_norm(dir), { recursive: true }); return { created: true, path: _norm(dir) }; }
   catch (e) { return { error: e.message }; }
 }
 
+/**
+ * 파일·폴더를 **옮기거나 이름을 바꾼다.**
+ *
+ * ★왜 만들었나 (2026-08-21 실사용):
+ *   사용자가 *"그 폴더 이름을 GPT이미지로 바꿔줘"* 라고 했는데 **그런 도구가 없었다.**
+ *   그래서 에이전트가 셸(`Rename-Item`)로 우회하려 했고, 셸은 허용을 받고도 못 부르는
+ *   codex 쪽 제약에 걸려 **결국 아무것도 못 했다.**
+ *   폴더 이름 바꾸기는 아주 흔한 일이다. 그걸 셸로 돌리는 구조 자체가 잘못이었다.
+ *
+ * ★출발지와 도착지를 **둘 다** 검사한다. 하나만 보면 허용 폴더 밖으로 빼돌릴 수 있다.
+ *   (허용된 폴더 안의 파일을 허용 안 된 곳으로 move 하면 그게 유출이다)
+ */
+/**
+ * 파일·폴더를 **지운다.**
+ *
+ * ★되돌릴 수 없다. 그래서 다른 파일 도구와 달리 **승인을 받는다**(agent-tools 에서 게이트).
+ *   허용된 폴더 안이라도 지우는 것은 다르다 — "쓸 수 있다" 와 "없애도 된다" 는 같은 말이 아니다.
+ *
+ * ⚠️ 폴더를 지울 때 **안에 든 것까지 통째로** 사라진다. 그래서 개수를 함께 돌려준다 —
+ *   에이전트가 사용자에게 "3개가 들어 있는데 지울까요" 라고 물을 수 있어야 한다.
+ */
+function removeFile(allowedDirs, target) {
+  target = _pick(allowedDirs, target);
+  if (!isAllowed(allowedDirs, target)) return { error: '허용되지 않은 경로예요.', needGrant: _norm(target) };
+  const T = _norm(target);
+  if (!fs.existsSync(T)) return { error: '지울 대상이 없어요: ' + T };
+  try {
+    const st = fs.statSync(T);
+    let 안개수 = 0;
+    if (st.isDirectory()) { try { 안개수 = fs.readdirSync(T).length; } catch (_) {} }
+    fs.rmSync(T, { recursive: true, force: true });
+    return { removed: true, path: T, wasDirectory: st.isDirectory(), 안에있던것: 안개수 };
+  } catch (e) { return { error: e.message }; }
+}
+
+/**
+ * 파일·폴더를 **복사한다.** 폴더면 안의 것까지 함께.
+ *   moveFile 과 같은 이유로 출발지·도착지를 **둘 다** 검사한다.
+ *   이미 있는 이름이면 거부한다 — 덮어쓰면 되돌릴 수 없다.
+ */
+/**
+ * 폴더를 한 겹씩 직접 복사한다.
+ *
+ * ★왜 fs.cpSync 를 안 쓰나 (2026-08-21 실측):
+ *   Node 22.17.0 의 `fs.cpSync` 가 **한글 이름 폴더에서 프로세스를 죽인다**(Segmentation fault).
+ *   예외가 아니라 **프로세스가 통째로 사라진다** — try/catch 로도 못 잡는다.
+ *   영문 이름은 멀쩡하다. 한국 사용자 제품이라 그냥 둘 수 없어 직접 구현한다.
+ */
+function _copyTree(F, T) {
+  const st = fs.statSync(F);
+  if (!st.isDirectory()) { fs.copyFileSync(F, T); return; }
+  fs.mkdirSync(T, { recursive: true });
+  for (const 이름 of fs.readdirSync(F)) _copyTree(path.join(F, 이름), path.join(T, 이름));
+}
+
+/**
+ * 파일·폴더를 **복사한다.** 폴더면 안의 것까지 함께.
+ *   moveFile 과 같은 이유로 출발지·도착지를 **둘 다** 검사한다.
+ *   이미 있는 이름이면 거부한다 — 덮어쓰면 되돌릴 수 없다.
+ */
+/**
+ * 옮길 곳·복사해 넣을 곳이 **짧게** 오면 출발지와 **같은 폴더**로 본다.
+ *   "옛이름 → 새이름" 은 자리를 옮기는 게 아니라 **그 자리에서 이름만 바꾸는 것**이다.
+ *   이걸 집 기준으로 풀면 이름만 바꾸려던 게 집으로 옮기는 일이 돼버린다.
+ */
+function _pick도착(allowedDirs, F, to) {
+  const s = String(to || '').trim();
+  if (!s) return s;
+  if (path.isAbsolute(s) || /^[a-zA-Z]:/.test(s) || _별칭으로시작(s)) return _pick(allowedDirs, s);
+  const 같은자리 = path.resolve(path.dirname(F), s);
+  return isAllowed(allowedDirs, 같은자리) ? 같은자리 : _pick(allowedDirs, s);
+}
+
+function copyFile(allowedDirs, from, to) {
+  from = _pick(allowedDirs, from);
+  to = _pick도착(allowedDirs, _norm(from), to);
+  if (!isAllowed(allowedDirs, from)) return { error: '복사할 대상이 허용되지 않은 경로예요.', needGrant: _norm(from) };
+  if (!isAllowed(allowedDirs, to)) return { error: '복사해 넣을 곳이 허용되지 않은 경로예요.', needGrant: _norm(to) };
+  const F = _norm(from), T = _norm(to);
+  if (!fs.existsSync(F)) return { error: '복사할 대상이 없어요: ' + F };
+  if (fs.existsSync(T)) return { error: '그 이름이 이미 있어요: ' + T };
+  try {
+    fs.mkdirSync(path.dirname(T), { recursive: true });
+    _copyTree(F, T);
+    return { copied: true, from: F, to: T };
+  } catch (e) { return { error: e.message }; }
+}
+
+function moveFile(allowedDirs, from, to) {
+  from = _pick(allowedDirs, from);
+  to = _pick도착(allowedDirs, _norm(from), to);
+  if (!isAllowed(allowedDirs, from)) return { error: '옮길 대상이 허용되지 않은 경로예요.', needGrant: _norm(from) };
+  if (!isAllowed(allowedDirs, to)) return { error: '옮길 곳이 허용되지 않은 경로예요.', needGrant: _norm(to) };
+  const F = _norm(from), T = _norm(to);
+  if (!fs.existsSync(F)) return { error: '옮길 대상이 없어요: ' + F };
+  if (fs.existsSync(T)) return { error: '그 이름이 이미 있어요: ' + T };   // 덮어쓰기는 하지 않는다(되돌릴 수 없다)
+  try {
+    fs.mkdirSync(path.dirname(T), { recursive: true });
+    fs.renameSync(F, T);
+    return { moved: true, from: F, to: T };
+  } catch (e) {
+    // 다른 드라이브 사이면 rename 이 안 된다 — 그때만 복사 후 삭제로 대신한다.
+    if (e && e.code === 'EXDEV') {
+      try { _copyTree(F, T)   /* cpSync 는 한글 폴더에서 죽는다 */; fs.rmSync(F, { recursive: true, force: true }); return { moved: true, from: F, to: T }; }
+      catch (e2) { return { error: e2.message }; }
+    }
+    return { error: e.message };
+  }
+}
+
 /** dir 하위에서 파일명에 query 가 포함된 것 검색(간단). max 개까지. */
 function searchFiles(allowedDirs, dir, query, max = 50) {
+  dir = _pick(allowedDirs, dir);
   if (!isAllowed(allowedDirs, dir)) return { error: '허용되지 않은 폴더예요.', needGrant: _norm(dir) };
   const q = String(query || '').toLowerCase();
   const hits = [];
@@ -148,4 +300,4 @@ function pathOrParentExists(p) {
   return false;
 }
 
-module.exports = { isAllowed, isProtected, commandMentionsProtected, setProtectedDataPaths, listFiles, readFile, writeFile, makeDir, searchFiles, _norm, pathOrParentExists, setDownloadDir };
+module.exports = { isAllowed, isProtected, commandMentionsProtected, setProtectedDataPaths, listFiles, readFile, writeFile, makeDir, moveFile, removeFile, copyFile, searchFiles, _norm, pathOrParentExists, setDownloadDir };
