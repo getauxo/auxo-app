@@ -1,7 +1,7 @@
 {
   "name": "auxo",
   "productName": "Auxo",
-  "version": "0.2.23",
+  "version": "0.2.29",
   "description": "Auxo — 나를 알아가고, 필요할 때 도와주는 AI 친구. 설치형 데스크톱 앱. 데이터 폴더는 dev·배포 모두 %APPDATA%/Auxo (productName 기준).",
   "main": "main.js",
   "engines": {
@@ -18,7 +18,7 @@
     "verify:dist": "node verify-dist.js",
     "verify:branding": "node verify-branding.js",
     "release": "node release.js",
-    "verify:package": "node verify-package.js && node audit-dead-files.js",
+    "verify:package": "node verify-package.js && node audit-dead-files.js && node audit-undefined-names.js && node audit-safety-parity.js",
     "verify:updatable": "node verify-updatable.js",
     "publish": "node publish-release.js"
   },
@@ -126,7 +126,8 @@
       "!*.out",
       "!*.err2",
       "!publish-release.js",
-      "!verify-public-words.js"
+      "!verify-public-words.js",
+      "!sync-*.js"
     ],
     "win": {
       "target": "nsis",
@@ -157,6 +158,7 @@
     "@electron/packager": "^20.0.3",
     "dotenv": "^17.4.2",
     "electron": "^43.4.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "typescript": "^5.9.3"
   }
 }

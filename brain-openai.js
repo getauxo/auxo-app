@@ -10,7 +10,12 @@
  *   opts: { apiKey, model, temperature, timeout, maxTokens, attachments, tools, extraDecls, extraExecute }
  *  - opts.tools=true → function-calling 루프(시간·계산·fetch + use_skill/MCP 등 extraDecls).
  *  - opts.attachments → 이미지는 image_url, **PDF 는 file 블록**(file_data=data URI)으로 첨부.
- *  - 웹검색: 제공자 **네이티브** 검색은 없다(Chat Completions 미지원, 추후 Responses API 어댑터=backlog).
+ *  - 웹검색: 우리가 쓰는 **일반 모델에는** 제공자 네이티브 검색이 없다(추후 Responses API 어댑터=backlog).
+ *    ★2026-08-19 정정: 전엔 "Chat Completions 미지원"이라 적었는데 **그건 틀렸다.**
+ *      Chat Completions 도 **전용 검색 모델**(`gpt-5-search-api` 등)로는 네이티브 검색이 된다.
+ *      다만 그 모델들은 Responses API 의 검색 기능(도메인 필터·전체 출처 목록 등)을 못 쓰고,
+ *      OpenAI 는 새 구현에 **Responses API** 를 권한다. `gpt-4o-search-preview` 계열은 2026-07-23 종료.
+ *      근거=OpenAI 공식 문서(developers.openai.com/api/docs/guides/tools-web-search). **실호출 미검증**.
  *    ⚠️단 "검색이 안 된다"는 뜻이 아니다 — `web_search` 는 tool-decls 의 **우리 공용 도구**이고 ALWAYS 라
  *    이 두뇌에도 실린다. 실측: 모델이 web_search 를 부르고 fetch_url 로 더 읽는다.
  *    (BRAIN_META 의 supportsWebSearch:false 는 **네이티브 유무**를 뜻한다. 사용자 관점에선 검색이 된다.)

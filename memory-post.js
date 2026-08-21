@@ -45,6 +45,62 @@ const SUMMARY_HISTORY_MAX = 6;      // 관계 reflection 재료로 쌓아둘 최
 //   도구(set_nickname)와 여기(그릇 편집)가 **같은 규칙**이어야 한다 — 두 벌이면 한쪽만 고치게 된다.
 const cleanNick = require('./memory-tools').cleanNick;
 
+/* ── 호칭·말투 즉시 감지 ────────────────────────────────────────────────
+ * 사용자가 "날 ○○라고 불러" · "존댓말로 해" 라고 말한 **그 턴에** 저장한다.
+ *
+ * 왜 코드가 판정하지 않고 두뇌에게 묻나:
+ *   2026-07-29 에 "사람 말의 의미를 코드가 판정하던 4곳"을 전부 LLM 판정으로 옮겼다.
+ *   정규식은 "형이라고 해"·"대장으로 하자" 같은 걸 못 잡는다. 같은 실수를 되풀이하지 않는다.
+ *
+ * 왜 먼저 낱말로 거르나:
+ *   매 턴 두뇌를 한 번 더 부르면 비용이 그만큼 는다. 대부분의 턴은 호칭·말투와 무관하다.
+ *   ⚠️ 이 거름망은 **후보를 좁힐 뿐 판정하지 않는다.** 놓친 표현("말 놔도 돼" 등)은
+ *      아래 압축 경로(안전망)가 늦게라도 잡는다. 두 겹으로 둔 이유다.
+ */
+const 호칭말투_낌새 = /부르|불러|호칭|존댓말|존칭|반말|말투|말 ?놓|말 ?놔|편하게 ?말/;
+
+async function 호칭말투잡기(agentId, userMessage, generate) {
+  const msg = String(userMessage || '').trim();
+  if (!msg || !호칭말투_낌새.test(msg)) return;          // 낌새 없음 → 두뇌 안 부름(비용 0)
+  if (typeof generate !== 'function') return;
+
+  let 판정;
+  try {
+    const out = await generate(
+      '너는 대화에서 **사용자가 자기를 어떻게 부르라고 했는지**와 **어떤 말투를 쓰라고 했는지**만 뽑는다.\n'
+      + '오직 JSON 한 줄로만 답한다. 다른 말은 절대 붙이지 않는다.\n'
+      + '{"nickname":"", "speech":""}\n'
+      + '· nickname = 사용자가 **자기 자신을** 그렇게 불러 달라고 한 호칭만. 제3자·등장인물 이름은 절대 넣지 않는다. 없으면 "".\n'
+      + '· speech = "formal"(존댓말로 하라고 함) | "casual"(반말로 하라고 함) | ""(말 없음).\n'
+      + '· 지시가 아니라 그냥 언급한 것이면 "" 로 둔다. 예: "존댓말이 뭐야?" → "".',
+      `사용자 말: ${msg.slice(0, 400)}`,
+      { tools: false, maxTokens: 120 },
+    );
+    const m = String(out || '').match(/\{[\s\S]*?\}/);
+    if (!m) return;
+    판정 = JSON.parse(m[0]);
+  } catch (_) { return; }                                 // 실패해도 대화는 그대로 — 안전망이 남아 있다
+
+  const nk = cleanNick(판정 && 판정.nickname);
+  const sp = ['formal', 'casual'].includes(판정 && 판정.speech) ? 판정.speech : '';
+  if (!nk && !sp) return;
+
+  const fresh = storage.loadAgent(agentId);
+  if (!fresh) return;
+  let 바뀜 = false;
+  if (nk && fresh.userNickname !== nk) {
+    fresh.userNickname = nk; fresh.userNicknameAt = Date.now(); 바뀜 = true;
+    console.log(`[post:호칭] "${nk}" — 사용자가 이번 턴에 정함`);
+  }
+  if (sp && fresh.userSpeech !== sp) {
+    // ★7-13 에 없앤 건 **설정 화면으로 강제하던 것**이다(그게 대화를 거슬러 어색했다).
+    //   이건 사용자가 **말로 정한 것을 기억**하는 것이라 그 결정과 어긋나지 않는다.
+    fresh.userSpeech = sp; fresh.userSpeechAt = Date.now(); 바뀜 = true;
+    console.log(`[post:말투] "${sp}" — 사용자가 이번 턴에 정함`);
+  }
+  if (바뀜) storage.saveAgent(fresh);
+}
+
 /**
  * 비차단 대화 압축. 실패해도 원본 대화는 절대 삭제하지 않는다.
  */
@@ -143,6 +199,16 @@ async function runPostMemory({ agentId, userMessage, response, generate, remembe
   const onWork = typeof hooks.onWork === 'function' ? hooks.onWork : () => {};
 
   let edited = 0, promoted = 0, grewTo = null, removedWrong = 0;
+
+  // ── (0) 호칭·말투 — **이번 턴에 바로** 잡는다 ────────────────────────
+  //   ★2026-08-20: 사용자가 첫 줄에 "날 ○○라고 부르고, 항상 존칭 써줘" 라고 했는데
+  //     호칭도 말투도 **저장이 하나도 안 됐다**(userNickname=null, 말투는 저장할 자리조차 없었음).
+  //     왜 —  호칭의 주 경로는 `set_nickname` 도구인데 codex 가 도구를 안 불렀고,
+  //           안전망(아래 압축 경로)은 대화 40개가 넘어야 도는데 24개였다.
+  //     결과 = 사용자가 정한 것이 **대화 이력에만** 남아, 이력이 안 실리는 경로
+  //           (정직 계층 되돌림 등)에서 통째로 사라져 반말로 답했다.
+  //   ★그래서 도구·압축과 **무관하게** 매 턴 도는 이 자리에서 잡는다. 두뇌 성향을 안 탄다.
+  await 호칭말투잡기(agentId, userMessage, generate);
 
   // ── (1) 대화 압축 + 일화 추출 + 그릇 편집 ───────────────────────────
   //   ★일화는 **매 턴**이 아니라 **접힐 때** 뽑는다(compressConversation 안).

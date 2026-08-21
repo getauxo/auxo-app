@@ -106,6 +106,30 @@ function _writeVersion(v) {
   db.run("INSERT INTO meta(k,v) VALUES('schema_version',?) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [String(v)]);
 }
 
+/* ── 지금 이 에이전트가 어느 창구에서 대화 중인가 ─────────────────────────
+ * 왜 저장소에 두나 (2026-08-20):
+ *   예약 알림이 **어느 채널에서 걸든 항상 앱으로만** 갔다. 텔레그램에서 걸어도 앱으로 갔다.
+ *   원인 = 예약을 만들 때 채널 정보가 아예 전달되지 않아 기본값 'app' 으로 저장된 것.
+ *   ★그런데 **구독 두뇌(claude·codex)는 MCP 가 별도 프로세스**라 메모리를 공유할 수 없고,
+ *     게이트웨이는 상시 유지라 환경변수로도 턴마다 바뀌는 값을 못 넘긴다.
+ *   → 두 경로(REST · MCP 별도 프로세스)가 **함께 보는 곳은 저장소뿐**이라 여기에 둔다.
+ * 성격: 휘발성 힌트다. 없으면 'app' 으로 친다(기존 동작과 같음).
+ */
+function setActiveChannel(agentId, channel) {
+  if (!agentId || !channel) return;
+  try {
+    db.run("INSERT INTO meta(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v",
+      ['active_channel:' + agentId, String(channel)]);
+  } catch (_) {}
+}
+function getActiveChannel(agentId) {
+  if (!agentId) return '';
+  try {
+    const r = db.get('SELECT v FROM meta WHERE k=?', ['active_channel:' + agentId]);
+    return (r && r.v) ? String(r.v) : '';
+  } catch (_) { return ''; }
+}
+
 /** 이관 전 원본 그대로 한 벌 남긴다. 최근 3개만 유지(무한히 쌓이면 그것대로 문제). */
 function _backupBeforeMigrate(from) {
   let bak = null;
@@ -303,6 +327,24 @@ function toolCallsSince(agentId, sinceTs) {
     //   *"알림 걸어놨어요"* 라고 해놓고 실제로는 인자가 틀려 실패한 턴이 통과한다(실측).
     //   사용자에겐 안 한 것과 똑같다 — 오히려 시각·내용까지 들어서 더 믿게 된다.
     const rows = db.all('SELECT name FROM tool_calls WHERE agent_id=? AND ts>=? AND ok=1 ORDER BY id', [agentId, Number(sinceTs) || 0]);
+    return [...new Set(rows.map(r => r.name))];
+  } catch (_) { return []; }
+}
+
+/**
+ * 이번 턴에 도구를 **부르기라도 했나** — 성공·실패를 가리지 않는다.
+ *
+ * ★`toolCallsSince` 와 **묻는 것이 다르다.** 헷갈리면 안 된다.
+ *   · `toolCallsSince` (ok=1 만)  → *"했다고 말한 게 진짜인가"*
+ *       실패를 근거로 쓰면 *"알림 걸어놨어요"* 인데 인자가 틀려 실패한 턴이 통과한다.
+ *   · `toolAttemptsSince` (전부)  → *"아예 시도조차 안 했나"*
+ *       도구를 불렀다가 **권한에 막힌 것은 정직한 행동**이다. 그걸 되돌리면 오탐이다.
+ *       (2026-08-20 사고의 세 번째 턴이 정확히 그것 — make_dir FAIL 이지만 에이전트는 옳게 행동했다)
+ */
+function toolAttemptsSince(agentId, sinceTs) {
+  _requireDb();
+  try {
+    const rows = db.all('SELECT name FROM tool_calls WHERE agent_id=? AND ts>=? ORDER BY id', [agentId, Number(sinceTs) || 0]);
     return [...new Set(rows.map(r => r.name))];
   } catch (_) { return []; }
 }
@@ -505,11 +547,12 @@ module.exports = {
   SCHEMA_VERSION,
   saveAgent, loadAgent, loadAllAgents,
   saveConversation, loadConversation, appendMessages,
-  recordToolCall, toolCallsSince, pruneToolCalls,
+  recordToolCall, toolCallsSince, toolAttemptsSince, pruneToolCalls,
   saveConversationSummary, loadConversationSummary,
   appendArchivedMessages, loadArchivedMessages, loadArchivedWindow, loadArchivedPage, archiveOldestActive,
   addEpisodes, markEpisodesPromoted,
   loadMsgEmbCache, saveMsgEmbCache,
   getUnvectorizedMessages, putMsgVecs, loadMsgVecs,
+  setActiveChannel, getActiveChannel,
   getDataPath,
 };

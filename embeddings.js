@@ -12,10 +12,17 @@
 'use strict';
 
 // Gemini 임베딩: text-embedding-004는 단종됨(404) → gemini-embedding-001 사용.
-// 새 모델은 batchEmbedContents 미지원 → embedContent(단건)을 순차 호출.
+// ★2026-08-19: 여기 "새 모델은 batchEmbedContents 미지원" 이라고 적혀 있었는데 **틀린 말이었다.**
+//   실호출로 확인함 — 배치 200 OK, 임베딩 8개, 차원 768. 그래서 배치 호출로 바꿨다.
+//   실측(8건): 배치 391ms·요청 1건  vs  단건 순차 2864ms·요청 8건 = 7.3배.
+//   ⚠️ 이 주석이 왜 있었는지는 모른다. 만들 당시엔 사실이었을 수도, 처음부터 틀렸을 수도 있다.
+//      교훈은 하나 — **"안 된다"는 주석은 실제로 불러 보기 전엔 믿지 않는다.**
 // outputDimensionality로 차원 축소(로컬 JSON 비대 방지, cosine은 차원만 맞으면 무관).
 const GEMINI_EMBED_MODEL = 'gemini-embedding-001';
 const GEMINI_EMBED_DIM = 768;
+// 한 배치의 상한. **추측이 아니라 API 가 정한 값**이다 — 150건 보내면
+// 400 "at most 100 requests can be in one batch" 가 온다(실측 2026-08-19).
+const GEMINI_EMBED_BATCH = 100;
 const OPENAI_EMBED = 'https://api.openai.com/v1/embeddings';
 const OPENAI_EMBED_MODEL = 'text-embedding-3-small';
 
@@ -42,23 +49,49 @@ function getEmbedder(agent) {
   //   화면엔 아무 표시도 안 난다. (단일키는 옛 데이터 호환으로만 남겨 둔다.)
   const key = agent && ((agent.apiKeys && agent.apiKeys[agent.brainMode]) || agent.apiKey);
   if (key && agent.brainMode === 'gemini-api') {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}:embedContent`;
+    const base = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_EMBED_MODEL}`;
+    const url = `${base}:embedContent`;
+    const batchUrl = `${base}:batchEmbedContents`;
+    const one = (t) => ({
+      model: 'models/' + GEMINI_EMBED_MODEL,
+      content: { parts: [{ text: String(t || '') }] },
+      outputDimensionality: GEMINI_EMBED_DIM,
+    });
+    const hdr = { 'Content-Type': 'application/json', 'x-goog-api-key': key };
+    // 단건 순차 — 배치가 실패했을 때만 쓰는 폴백.
+    const seq = async (list) => {
+      const out = [];
+      for (const t of list) {
+        const data = await _fetchJson(url, { method: 'POST', headers: hdr, body: JSON.stringify(one(t)) });
+        out.push((data.embedding && data.embedding.values) || []);
+      }
+      return out;
+    };
     return {
       key: 'gemini:' + GEMINI_EMBED_MODEL,
       embed: async (texts) => {
-        // 새 모델은 배치 미지원 → 단건 순차 호출(소량·캐시되므로 1회성). 레이트리밋 보수적.
+        // ★배치로 부른다. 100건씩 끊는다 — **API 가 정한 상한**이다(실측 2026-08-19:
+        //   150건 보내면 400 "at most 100 requests can be in one batch").
+        //   실측 8건 기준 배치 391ms(요청 1건) vs 단건 순차 2864ms(요청 8건) = 7.3배.
+        //   요청 수가 줄어 레이트리밋에도 훨씬 덜 걸린다.
+        //   ⚠️ 배치가 실패하면 **그 묶음만 단건으로 다시** 한다 — 임베딩이 통째로 죽으면
+        //      기억 검색 품질이 조용히 떨어지고 화면엔 아무 표시도 안 난다.
         const out = [];
-        for (const t of texts) {
-          const data = await _fetchJson(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-            body: JSON.stringify({
-              model: 'models/' + GEMINI_EMBED_MODEL,
-              content: { parts: [{ text: String(t || '') }] },
-              outputDimensionality: GEMINI_EMBED_DIM,
-            }),
-          });
-          out.push((data.embedding && data.embedding.values) || []);
+        for (let i = 0; i < texts.length; i += GEMINI_EMBED_BATCH) {
+          const chunk = texts.slice(i, i + GEMINI_EMBED_BATCH);
+          try {
+            const data = await _fetchJson(batchUrl, {
+              method: 'POST', headers: hdr,
+              body: JSON.stringify({ requests: chunk.map(one) }),
+            });
+            const got = (data.embeddings || []).map(e => (e && e.values) || []);
+            // 개수가 안 맞으면 믿지 않는다 — 순서가 어긋나면 엉뚱한 기억이 검색된다.
+            if (got.length !== chunk.length) throw new Error(`배치 응답 개수 불일치 ${got.length}/${chunk.length}`);
+            out.push(...got);
+          } catch (e) {
+            console.warn('[embeddings] 배치 실패 → 단건으로 대체: ' + (e && e.message));
+            out.push(...await seq(chunk));
+          }
         }
         return out;
       },

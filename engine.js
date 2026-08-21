@@ -307,7 +307,12 @@ async function runTurn(opts) {
   return agentQueue.runExclusive(opts && opts.agentId, () => _runTurn(opts));
 }
 
-async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, deliverFile, displayUserMessage, userFiles, onDelta, signal }) {
+async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, deliverFile, displayUserMessage, userFiles, onDelta, signal, channel }) {
+  // ★어느 창구에서 온 턴인지 남긴다 — 예약 알림을 **걸었던 그 창구로** 보내기 위함(2026-08-20).
+  //   전엔 이 정보가 아예 없어서 텔레그램에서 걸어도 알림이 앱으로만 갔다.
+  //   두뇌에게 묻지 않는다. 코드가 아는 사실이므로 코드가 넣는다.
+  //   ※ 저장소에 두는 이유 = 구독 두뇌는 MCP 가 **별도 프로세스**라 메모리를 못 나눈다([[storage.setActiveChannel]] 주석).
+  if (channel) { try { storage.setActiveChannel(agentId, channel); } catch (_) {} }
   // 저장/표시용 메시지(displayUserMessage)와 두뇌 전달용(userMessage)을 분리 가능.
   // 앱이 첨부를 인테이크한 뒤: 두뇌엔 파일내용·경로 인라인(userMessage), 대화엔 "첨부: 이름"만(displayUserMessage)
   // + 첨부 원본 카드(userFiles)를 사용자 메시지에 붙인다. 미지정 시 기존 동작(둘 다 userMessage, 카드 없음).
@@ -363,7 +368,14 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
   emit('recall', { chars: memory.user.length, refChars: memory.ref.length, mode: 'whole' });
 
   // ── 시스템 프롬프트 (1층 + 성격 + 회상된 기억). 도구·스킬 없음(v1) ──
-  const layer2 = { speech: agent.speech || 'auto', userNickname: agent.userNickname || '', auxoMd: agent.auxoMd || '' };
+  // userSpeech = 사용자가 **말로 정한** 말투('formal'|'casual'). 없으면 미러링(옛 동작).
+  //   ※ speech(옛 필드)는 2026-07-13 에 'auto' 로 무력화됐다. 그건 설정 화면용이었고 이건 대화로 정한 것이다.
+  const layer2 = {
+    speech: agent.speech || 'auto',
+    userSpeech: agent.userSpeech || '',
+    userNickname: agent.userNickname || '',
+    auxoMd: agent.auxoMd || '',
+  };
   // 도구 모드: 1층에 쓸 수 있는 도구를 알린다(없으면 두뇌가 "도구 없음"으로 판단해 호출 안 함).
   // 모든 LLM 두뇌 도구 지원: claude·codex=MCP 주입, gemini·openai=function-calling.
   // 위임 경로: REST 두뇌=function-calling(extraDecls + 누적 가드레일) / 구독 두뇌=MCP 서버(auxo-mcp-tools).
@@ -490,7 +502,9 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
   // toolsAreLive: 구독 두뇌(claude·codex)는 MCP 로 도구가 **이미 붙어 있다**. 그 사실을 말해줘야
   //   두뇌가 목록을 '설명'이 아니라 '지금 부를 수 있는 것'으로 읽는다(brain-claude.buildSystemPrompt 주석의 실측).
   let systemPrompt = brainClaude.buildSystemPrompt(agent.name, agent.persona, memory, layer2, availableTools, skillCatalog,
-    { toolsAreLive: subDelegate });
+    // toolsOutsideSandbox: 구독 두뇌는 CLI 자체 자물쇠(codex -s workspace-write / claude --disallowedTools) 안에서 돈다.
+    //   그 자물쇠는 **자기 손**에만 걸리고 우리 MCP 도구와는 무관한데, 두뇌가 둘을 섞어 '차단됐다'며 아예 안 부른다(실측 0/8).
+    { toolsAreLive: subDelegate, toolsOutsideSandbox: subDelegate });
   const nowKST = localTools.getCurrentTime().korea_time;
   systemPrompt += `\n\n[현재 시각 (사실 — 반드시 이것만 기준)]\n지금은 한국 시간으로 ${nowKST}야. "오늘/지금/현재/올해" 같은 시점은 절대 추측하지 말고 반드시 이 값을 기준으로 답해.`;
   // ★지금 걸린 알림을 **사실로** 싣는다 — 현재 시각과 같은 이유다.
@@ -508,6 +522,39 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
       systemPrompt += _sch.map(s => `· ${s.title || '(제목 없음)'} — ${scheduler.describe(s)}`).join('\n')
         + `\n위가 전부야. 여기 없는 건 **걸려 있지 않다.** 예전 대화에 나왔더라도 지금은 없는 것이다.`;
     }
+  }
+  // ★지금 **접근이 허용된 폴더**를 사실로 싣는다 — [현재 시각]·[지금 걸린 알림] 과 같은 자리다.
+  //   전엔 이걸 **한 번도 안 알려줬다.** 허용 직후 한 턴만 approvalNote 로 알리고(451줄) 그 뒤엔 깜깜하다.
+  //   그래서 두뇌가 **추측한다** — 실측(2026-08-21 재현): Desktop 이 이미 허용돼 있는데도
+   //   *"실행 자체가 정책에서 막혔어요"* 라며 list_files 를 안 불렀다(되돌림 2회를 다 쓰고도).
+  //   codex 는 자기 샌드박스가 좁아서 그 감각으로 우리 허용 범위까지 좁게 짐작한다.
+  //   → 짐작할 자리를 없앤다. **맞는 값을 준다.**
+  {
+    const _dirs = Array.isArray(agent.allowedDirs) ? agent.allowedDirs.filter(Boolean) : [];
+    if (_dirs.length) {
+      systemPrompt += `
+
+[지금 접근이 허용된 폴더 (사실 — 반드시 이것만 기준)]
+`
+        + _dirs.map((d) => `· ${d}`).join('\n')
+        + `
+이 폴더들(과 그 아래)에서는 파일·폴더 작업이 **실제로 된다.** "권한이 없다"고 짐작하지 말고 그냥 해.`
+        + `
+여기 없는 곳은 도구를 부르면 사용자에게 허용 요청이 뜬다 — 부르지 않으면 요청조차 안 생긴다.`;
+    } else {
+      systemPrompt += `
+
+[지금 접근이 허용된 폴더 (사실)]
+아직 **하나도 없다.** 파일·폴더 작업을 부탁받으면`
+        + ` 도구를 불러라 — 그래야 사용자에게 허용 요청이 뜬다. 미리 "권한이 없어 못 한다"고 답하지 마.`;
+    }
+    // ★셸도 같다 — 폴더와 똑같이 **한 번도 안 알려주고 있었다.**
+    //   실측(2026-08-21): allowShell 이 꺼진 상태에서 *"node 버전 좀 확인해줘"* 에
+    //   run_shell 을 **안 부르고** "실행 정책에 막혔어" + PowerShell 안내로 빠졌다(되돌림 2회를 다 쓰고도).
+    //   폴더 사고와 **같은 모양**이다: 짐작 → 미호출 → 허용 요청이 안 생김.
+    systemPrompt += agent.allowShell
+      ? `\n[터미널 명령 실행 (사실)]\n사용자가 **이미 허용했다.** run_shell·run_code 를 그냥 써. "권한이 없다"고 짐작하지 마.`
+      : `\n[터미널 명령 실행 (사실)]\n아직 허용 안 됐다. 그래도 **필요하면 도구를 불러라** — 그래야 사용자에게 허용 요청이 뜬다. 미리 "막혔다"고 답하지 마.\n★**네 자체 셸(bash/PowerShell)이 막힌 것과 run_shell 은 별개다.** run_shell 은 네 프로세스 밖에서 돈다.`;
   }
   const _osName = process.platform === 'win32' ? 'Windows (명령프롬프트/PowerShell — dir·type·copy 등)' : process.platform === 'darwin' ? 'macOS (zsh/bash — ls·cat·cp 등)' : 'Linux (bash — ls·cat·cp 등)';
   // 설치된 런타임 = 환경 '사실' → 모든 두뇌 공통으로 알려준다(구독 두뇌도 자기 환경을 알게). availableLangs는 1회 캐시라 매 턴 비용 없음.
@@ -711,6 +758,26 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
     files: (Array.isArray(userFiles) && userFiles.length) ? userFiles : undefined,
   }]);
 
+  // ── 정직 계층 ⑤ 준비: **요청 판정을 지금 미리 띄운다** ──────────────────
+  //   이 판정은 *"사용자가 부탁한 게 도구를 요하나"* 만 본다 — **답변을 안 본다.**
+  //   그러니 답을 기다릴 이유가 없다. 주 호출과 **나란히** 돌리면 체감 지연이 0 이 된다.
+  //   ★안 그러면 잡담 턴마다 답이 다 나온 뒤 **+4.6초**가 붙는다(2026-08-21 실측, codex).
+  //     동반자 제품에서 잡담이 가장 흔한 턴이라 그 지연은 그대로 제품 품질이다.
+  //   대가 = 도구를 쓴 턴에서도 판정이 돌아 헛돈다(실사용 표본 13턴 중 4턴).
+  //     토큰으로는 턴당 +170 정도 — **4.6초와 바꿀 값으로 싸다**고 봤다.
+  //   ※ 직전 발언은 **지금** 읽어야 한다. 이 턴 답변은 아직 저장 전(943줄)이라 안전하다.
+  let _prevAssistant = '';
+  try {
+    const _conv = storage.loadConversation(agentId) || [];
+    for (let k = _conv.length - 1; k >= 0; k--) {
+      if (_conv[k] && _conv[k].role !== 'user' && _conv[k].content) { _prevAssistant = String(_conv[k].content); break; }
+    }
+  } catch (_) {}
+  //   실패해도 대화를 막지 않는다 — null 이면 check 가 알아서 스스로 판정한다.
+  const _needToolP = userMessage
+    ? claimCheck.needsTool(userMessage, _prevAssistant, generate).catch(() => null)
+    : Promise.resolve(null);
+
   emit('thinking', {});
   // 구독 두뇌 비전: 첨부는 inline_data(API 두뇌)가 아니라 디스크의 파일 경로를 CLI가 직접 열어서 본다.
   // → 구독 2종(claude=native Read / codex=read-only 파일읽기)에 경로 전달.
@@ -846,19 +913,93 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
   if (evidenceSink.length) { try { storage.recordToolCall(agentId, 'web_search'); } catch (_) {} }
 
   // ── 정직 계층 ⑤: 말과 행동 대조 ─────────────────────────────────
-  //   "했다"고 말했는데 도구를 하나도 안 부른 턴을 잡는다(예: 안 지우고 "지웠습니다").
-  //   판정 기준은 **두뇌 자신의 말**이다 — 도구를 "썼어야 했는지"는 판정하지 않는다.
+  //   두 가지를 잡는다(2026-08-20 확장).
+  //     · **빠뜨림** — 사용자가 부탁한 일이 도구를 요했는데 **하나도 안 불렀다**(요청 기준)
+  //     · **거짓 완료** — 부탁받지도 않고 "했다"고 말했는데 안 불렀다(말 기준, 원래 방식)
+  //   전엔 말 기준만 있어서 *"차단됐습니다"* 같은 **실패 주장**이 통째로 새 나갔다.
   //   근거·설계 = claim-check.js. 실패해도 대화는 그대로 나간다(검사가 답을 막지 않는다).
+  const _원래답 = response;   // 되돌림이 답을 **더 나쁘게** 만들 수 있어 원본을 쥐고 있는다(아래 참조)
+  let _정직안내 = '';           // 두 번 다 실패했을 때 사용자에게 붙일 말(아래에서 마지막에 붙인다)
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
-      const v = await claimCheck.check({ agentId, responseText: response, turnStartTs: _turnStartTs, generate });
+      const v = await claimCheck.check({
+        agentId, responseText: response, userMessage, prevAssistant: _prevAssistant,
+        // ★턴 시작 때 미리 띄운 판정(위). 이미 끝나 있어 기다리는 시간이 0 이다.
+        //   되돌림 2회차에도 **같은 값을 그대로 쓴다** — 사용자 요청은 그 사이 바뀌지 않았다.
+        //   (전엔 2회차에 null 을 넘겨 판정을 한 번 더 불렀다. 같은 답을 돈 주고 두 번 산 셈이다.)
+        needResult: await _needToolP,
+        turnStartTs: _turnStartTs, generate,
+      });
       if (!v.suspect) break;
-      console.warn(`[claim] 완료 주장 ${v.claims.length}건인데 도구 호출 0 — 되돌림 ${attempt + 1}/2: ${v.claims.join(" / ")}`);
-      if (attempt === 1) { response += claimCheck.failNotice(v.claims); break; } // 두 번째도 실패 → 사용자에게 정직하게
-      // 구독 두뇌는 CLI 가 노출을 정해 우리가 목록을 모른다 → 빈 배열이면 "네 목록을 확인하라"로 나간다.
-      const known = restTools && Array.isArray(extraDecls) ? extraDecls.map(d => d.name) : [];
+      const _왜 = v.reason === 'request' ? `요청은 '${v.kind}' 도구가 필요한데 호출 0` : `완료 주장 ${v.claims.length}건인데 도구 호출 0`;
+      console.warn(`[claim] ${_왜} — 되돌림 ${attempt + 1}/2${v.claims.length ? ': ' + v.claims.join(" / ") : ''}`);
+      // 두 번째도 실패 → **사용자에게 정직하게 알린다.** 답을 지우지는 않고 덧붙이기만 한다.
+      //   ★요청 기준에도 반드시 붙여야 한다. 검색이 특히 그렇다 —
+      //     실측: 날씨를 안 찾아보고 수치와 **출처 링크까지 지어냈다.** 사용자는 그걸 믿는다.
+      if (attempt === 1) {
+        //   ★안내는 response 에 바로 붙이지 않고 **따로 담는다.**
+        //     아래 "되돌림 되돌리기" 가 response 를 원래 답으로 갈아끼우는데,
+        //     바로 붙이면 그때 **정직 안내까지 같이 지워진다.**
+        _정직안내 = v.reason === 'request'
+          ? claimCheck.requestFailNotice(v.kind)
+          : claimCheck.failNotice(v.claims);
+        break;
+      }
+      // 되돌림 문구에 넣을 도구 이름.
+      //   ★전엔 구독 두뇌에 **빈 배열**을 줘서 "먼저 네 도구 목록을 확인해"라고만 나갔다.
+      //     CLI 가 무엇을 노출하는지 우리가 정확히는 모른다는 이유였는데, 그건 지나친 조심이었다 —
+      //     availableTools 는 **우리가 MCP 로 실제로 넘긴 목록**이라 이름을 대주는 편이 낫다.
+      //     이름을 안 대주면 두뇌가 "그런 도구는 없다"는 출구로 빠지기 쉽다(실측: 되돌림 뒤에도 PowerShell 안내).
+      const known = restTools && Array.isArray(extraDecls)
+        ? extraDecls.map(d => d.name)
+        : (Array.isArray(availableTools) ? availableTools : []);
+      // ── 검색만은 되돌림이 안 통한다 → **우리가 대신 부른다** ──────────────
+      //   실측(2026-08-21, codex): *"오늘 서울 날씨 검색해서 알려줘"* 에 `web_search` 를
+      //   **한 번도 안 부르고** 기온·강수확률을 지어내고 **출처 링크까지 만들어 붙였다.**
+      //   되돌림 0/4. 프롬프트도 소진 — 사실을 못박아도(A 0/3 · B 0/3 · C 0/3) 그대로였다.
+      //   답을 보면 *"검색해봤어"·"조회 기준으로"* 라고 **대놓고 말한다.** 못 한다고 믿는 게 아니라
+      //   **했다고 여긴다.** 그래서 "불러라"는 말이 닿지 않는다.
+      //
+      //   → 업계 원칙대로 **결정론적 시스템이 실제 호출을 담당**한다.
+      //     이 파일이 이미 쓰는 방식이기도 하다 — [현재 시각]·[지금 걸린 알림] 과 같다:
+      //     *"답할 재료를 미리 줘놓고 도구를 부르길 기대하지 말고, **맞는 값을 준다**"*(위 515줄).
+      //   ⚠️ 검색이 실패해도 대화는 그대로 간다 — 그냥 평소 되돌림으로 떨어진다.
+      //
+      //   ★왜 **검색만** 대신 부르나 (나머지는 여전히 말로 설득한다)
+      //     · 검색 = **읽기 전용.** 사용자 대신 해도 아무것도 안 바뀐다. 안전하다.
+      //     · 파일·셸 = **허용이 필요하다.** 우리가 대신 부르면 사용자 승인 체계를 우리 손으로 건너뛰는 셈이다.
+      //       그건 이 제품이 지켜온 선을 넘는다 — 허락은 사용자만 한다.
+      //     · 예약 = 사용자가 확인하지 않은 일정이 실제로 생긴다. 되돌리기 어렵다.
+      //     · 기억 조회 = 읽기 전용이라 후보이긴 하나, **실측 3/3 이라 손댈 이유가 없다.**
+      let _준검색 = '';
+      if (v.reason === 'request' && v.kind === 'search' && attempt === 0) {
+        try {
+          const _sk = (agent && agent.search) || {};
+          //   ★검색어는 **판정기가 뽑아준 것**을 쓴다(추가 호출 없이 같이 받아둔다).
+          //     사용자 말을 통째로 넣으면 *"그거 좀 찾아봐"* 같은 게 그대로 검색어가 돼
+          //     엉뚱한 결과를 **사실이라며 주입**하게 된다. 그게 안 하느니만 못하다.
+          const _q = (v.query && v.query.trim()) || String(userMessage).slice(0, 200);
+          const _r = await require('./web-search').webSearch(_q, {
+            max: 5, provider: _sk.provider, naver: _sk.naver, tavily: _sk.tavily,
+          });
+          const _items = (_r && Array.isArray(_r.results)) ? _r.results.slice(0, 5) : [];
+          if (_items.length) {
+            _준검색 = '\n\n[검색 결과 — 우리가 실제로 찾아온 것. **이것만 근거로 답해라.**]\n'
+              + _items.map((x) => `· ${x.title}\n  ${x.snippet || ''}\n  (${x.url})`).join('\n')
+              + '\n여기 없는 수치·사실은 **쓰지 마.** 출처 링크는 위 것만 쓰고 상상해서 만들지 마.\n물어본 것과 **관계없는 결과뿐이면** 억지로 답하지 말고 "지금은 못 찾았다"고 말해.';
+            //   근거를 남긴다 — 정직 계층 ②·④ 가 이걸 쓰고, 장부에도 남아 다음 검사가 통과된다.
+            for (const x of _items) evidenceSink.push({ text: `${x.title}\n${x.snippet || ''}`, sources: [{ title: x.title, uri: x.url }] });
+            try { storage.recordToolCall(agentId, 'web_search'); } catch (_) {}
+            console.warn(`[claim] 검색은 되돌림이 안 통한다 — 우리가 대신 ${_items.length}건 찾아 넣는다`);
+          }
+        } catch (e) { console.error('[claim] 대신 검색 실패(무시):', e.message); }
+      }
+      const _nudge = v.reason === 'request'
+        ? claimCheck.buildRequestNudge(v.kind, known, userMessage)
+        : claimCheck.buildNudge(v.claims, known);
+      const _nudgeFull = _nudge + _준검색;   // 대신 찾아온 게 있으면 재료로 함께 넘긴다
       //   ★도구를 다시 쓸 수 있어야 의미가 있다 → 원래 턴과 같은 도구 조건으로 되돌린다.
-      const retry = await generate(systemPrompt, claimCheck.buildNudge(v.claims, known), {
+      const retry = await generate(systemPrompt, _nudgeFull, {
         tools: true, webSearch: WEBSEARCH_BRAINS.has(agent.brainMode),
         extraDecls, extraExecute,
         mcpHttp: (mcpHttp && mcpHttp.length) ? mcpHttp : undefined, auxoHttp,
@@ -867,6 +1008,25 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
       if (retry && String(retry).trim()) response = String(retry).trim(); else break;
     }
   } catch (err) { console.error("[claim] 대조 실패(무시):", err.message); }
+
+  // ★되돌림이 **답을 더 나쁘게** 만들 수 있다 — 그때는 원래 답으로 되돌린다.
+  //   되돌림은 대화 이력을 안 실어 보낸다(그래서 싸다). 그래서 두뇌가 맥락을 잃고
+  //   요청과 무관한 말을 내놓을 수 있다(2026-08-21 E2E 실측: 폴더 요청에 "앞으로 잘하겠다"는 다짐이 나왔다).
+  //   기준은 **도구를 결국 불렀는가** 하나다 — 불렀으면 되돌림이 제 일을 한 것이고,
+  //   끝내 안 불렀으면 새 답은 아무것도 못 고친 채 맥락만 잃은 것이다.
+  //   ※ "우리가 대신 검색"한 턴은 장부에 web_search 가 남아 여기서 안 되돌린다 — 맞다.
+  //     장부가 묻는 건 **일이 실제로 일어났나**이고, 우리가 부른 것도 실제로 일어난 것이다
+  //     (엔진이 네이티브 검색에도 같은 방식으로 남긴다 — 위 evidenceSink 자리).
+  if (response !== _원래답) {
+    let _결국불렀나 = [];
+    try { _결국불렀나 = storage.toolAttemptsSince(agentId, _turnStartTs) || []; } catch (_) {}
+    if (!_결국불렀나.length) {
+      console.warn('[claim] 되돌림 뒤에도 도구 호출 0 — 원래 답을 그대로 쓴다(맥락 잃은 답으로 바꾸지 않는다)');
+      response = _원래답;
+    }
+  }
+  // 정직 안내는 **맨 마지막에** 붙인다 — 위 되돌리기가 지나간 뒤라 안 지워진다.
+  if (_정직안내) response += _정직안내;
 
   // ── 정직 계층 ②: post-hoc 사실 검증 ─────────────────────────────
   // 검색 근거가 있을 때만(=실시간·사실 답변) 작동 → 잡담은 비용 0. 지지도 낮으면 말투만 눅인다(재생성 안 함).

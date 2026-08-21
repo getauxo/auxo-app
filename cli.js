@@ -716,6 +716,7 @@ async function chatLoop(agent) {
 
     const r = await engine.runTurn({
       agentId: agent.id, userMessage, attachments, userFiles, emit,
+      channel: 'cli',   // 여기서 건 예약은 CLI 로 간다(2026-08-20)
       deliverFile: async ({ path: fp, name, note }) => {
         console.log('\n' + c.green('  📎 파일 받음: ') + c.b(name) + (note ? c.dim('  — ' + note) : ''));
         console.log(c.dim('    경로: ' + fp));

@@ -350,7 +350,8 @@ function makeExecute(ctx) {
       return await webSearchTool.webSearch(args.query, { max: args.max, provider: sk.provider, naver: sk.naver, tavily: sk.tavily });
     }
     if (n === 'schedule_task') {
-      const s = scheduler.createSchedule(args);
+      // 지금 대화 중인 창구로 알림이 가게 한다(2026-08-20). 없으면 옛 동작대로 app.
+      const s = scheduler.createSchedule(args, storage.getActiveChannel(agentId));
       if (s.error) return { error: s.error };   // 예: weekly 인데 요일을 안 줬다 → 되묻게 한다
       if (!s.title || !s.prompt) return { error: 'title과 prompt가 필요해' };
       const fresh = storage.loadAgent(agentId);

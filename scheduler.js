@@ -219,9 +219,19 @@ async function runDueSchedules(agentId, now, deps) {
   return ran;
 }
 
-/** schedule_task 인자 → 스케줄 객체(공통 — agent-tools·auxo-mcp 둘 다 사용). */
-function createSchedule(args) {
+/**
+ * schedule_task 인자 → 스케줄 객체(공통 — agent-tools·auxo-mcp 둘 다 사용).
+ * @param {object} args  도구 인자
+ * @param {string} [활성채널]  지금 대화 중인 창구('telegram'·'discord'·'cli'·'app').
+ *   ★2026-08-20: 이게 없어서 **어느 창구에서 걸든 알림이 앱으로만 갔다.**
+ *     호출부가 저장소에서 읽어 넘긴다(구독 두뇌는 MCP 별도 프로세스라 저장소가 유일한 통로).
+ */
+function createSchedule(args, 활성채널) {
   const a = args || {};
+  // 창구가 어긋나면 그 자리에서 남긴다 — 안 남기면 "왜 앱으로 갔지"를 또 소거법으로 쫓게 된다(2026-08-20).
+  if (a.channel && 활성채널 && a.channel !== 활성채널) {
+    try { console.warn(`[scheduler] 두뇌가 채널을 '${a.channel}' 로 줬으나 실제 창구는 '${활성채널}' → 실제 창구를 쓴다`); } catch (_) {}
+  }
   const kind = ['daily', 'weekly', 'monthly', 'yearly', 'hourly', 'interval', 'once'].includes(a.kind) ? a.kind : 'daily';
   // 주기에 꼭 필요한 값이 없으면 **조용히 daily 로 떨어뜨리지 않는다.**
   //   그러면 매일 울려서 사용자가 "왜 매일 오지" 하게 되고, 원인을 알 길이 없다. 되물어야 한다.
@@ -237,7 +247,16 @@ function createSchedule(args) {
   const s = {
     id: 'sch-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
     title: String(a.title || '').trim(), kind, prompt: String(a.prompt || '').trim(),
-    channel: a.channel || 'app', enabled: true, createdAt: new Date().toISOString(), lastRunAt: null,
+    // 창구 결정: **지금 대화 중인 창구가 먼저다.**
+    // ★2026-08-20 정정: 처음엔 `a.channel || 활성채널` 로 짰다가 안 먹었다.
+    //   실측 — 활성 창구는 'telegram' 인데 저장된 값은 'app'. 즉 **두뇌가 channel:'app' 을 직접 넣었다**
+    //   (도구 선언에 없는 인자인데도 넣는다. 기존 예약 목록을 보고 흉내 낸 것으로 보인다).
+    //   "두뇌에게 묻지 않는다, 코드가 아는 사실은 코드가 넣는다" 고 정해놓고 코드는 반대로 짰던 것.
+    //   → 사용자가 어느 창구에서 말하고 있는지는 **코드가 아는 사실**이므로 그게 이긴다.
+    //   ※ 나중에 "이건 텔레그램으로 보내줘" 를 지원하려면 도구 선언에 채널을 정식으로 넣고
+    //     사용자 의도임이 확인될 때만 우선하도록 따로 설계할 것. 지금 그 통로는 없다.
+    channel: 활성채널 || a.channel || 'app',
+    enabled: true, createdAt: new Date().toISOString(), lastRunAt: null,
   };
   if (kind === 'daily') s.at = /^\d{1,2}:\d{2}$/.test(a.at || '') ? a.at : '09:00';
   else if (kind === 'weekly') {

@@ -221,7 +221,8 @@ const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.i
       }
     }
     else if (name === 'schedule_task') {
-      const s = scheduler.createSchedule(args);
+      // ★구독 두뇌 경로. 이 프로세스는 앱과 **따로 돌기 때문에** 창구를 저장소에서 읽는다(2026-08-20).
+      const s = scheduler.createSchedule(args, storage.getActiveChannel(AGENT_ID));
       if (s.error) r = { error: s.error };      // 예: weekly 인데 요일을 안 줬다 → 되묻게 한다
       else if (!s.title || !s.prompt) r = { error: 'title과 prompt가 필요해' };
       else { const fresh = storage.loadAgent(AGENT_ID); if (!fresh) r = { error: '저장 실패' }; else { fresh.schedules = fresh.schedules || []; fresh.schedules.push(s); storage.saveAgent(fresh); r = { scheduled: true, id: s.id, message: `'${s.title}' 예약 완료 — ${scheduler.describe(s)}.${scheduler.caveat(s)}` }; } }

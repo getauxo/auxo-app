@@ -216,6 +216,7 @@ async function startBot(cfg, opts = {}) {
       try {
         r = await engine.runTurn({
           agentId: cfg.agentId, userMessage, attachments, userFiles,
+          channel: 'telegram',   // 여기서 건 예약은 텔레그램으로 간다(2026-08-20)
           emit: (ch, p) => { if (ch === 'status' && p && p.text) notifyStatus(p.text); }, // 유튜브 등 "받는 중"
           deliverFile: async ({ path: fp, name, note }) => {
             tgPost(cfg.token, 'sendChatAction', { chat_id: chatId, action: 'upload_document' }).catch(() => {});

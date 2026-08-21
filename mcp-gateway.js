@@ -16,6 +16,7 @@
 const http = require('http');
 const path = require('path');
 const mcpManager = require('./mcp-manager');
+const storage = require('./storage');   // 설치 MCP 호출을 장부에 남긴다(2026-08-20)
 
 // key: `${agentId}::${serverId}` → { httpServer, port, url }
 const gateways = new Map();
@@ -47,7 +48,29 @@ async function _startGateway(agentId, server) {
         });
         srv.setRequestHandler(CallToolRequestSchema, async (r) => {
           // claude/codex의 호출을 실서버로 그대로 전달.
-          return await entry.client.callTool({ name: r.params.name, arguments: r.params.arguments || {} });
+          //
+          // ★2026-08-20: 여기를 **장부에도 남긴다.**
+          //   구독 두뇌(codex·claude)가 설치 MCP(playwright·구글 등)를 부르면 그 호출은
+          //   이 프록시만 지나고 **우리 장부엔 아무것도 안 남았다.** 우리 기본 도구는
+          //   auxo-mcp-tools 가 남기는데 설치 MCP 만 비어 있었다.
+          //   → 정직 계층이 "도구 0회"로 읽어 **멀쩡히 한 일을 안 했다고 판정**할 수 있다(오탐).
+          //   업계 원칙 = "런타임이 진실의 원천". 우리가 이미 길목에 서 있는데 적지를 않고 있었다.
+          //
+          //   ⚠️ 기록은 **곁다리다.** 실패해도 도구 호출은 그대로 나가야 한다 —
+          //      장부 때문에 사용자의 작업이 깨지면 그게 더 나쁘다.
+          const _이름 = r.params.name;
+          let _ok = true;
+          try {
+            const out = await entry.client.callTool({ name: _이름, arguments: r.params.arguments || {} });
+            // MCP 규약: 실패는 예외가 아니라 isError 로 온다. 둘 다 실패로 친다.
+            _ok = !(out && out.isError);
+            return out;
+          } catch (e) {
+            _ok = false;
+            throw e;
+          } finally {
+            try { storage.recordToolCall(agentId, _이름, _ok); } catch (_) {}
+          }
         });
         const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
         res.on('close', () => { try { transport.close(); srv.close(); } catch (_) {} });

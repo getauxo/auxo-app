@@ -1007,6 +1007,7 @@ async function handleChatSend(e, { agentId, userMessage, attachments }) {
   try {
     r = await engine.runTurn({
       agentId, userMessage, displayUserMessage,
+      channel: 'app',   // 이 창구에서 건 예약은 이 창구로 간다(2026-08-20)
       userFiles: userFiles.length ? userFiles : undefined,
       attachments: atts, onDelta, deliverFile: deliverFileToApp, emit,
       signal: _ac.signal,

@@ -172,6 +172,7 @@ async function startBot(cfg, opts = {}) {
     try {
       r = await engine.runTurn({
         agentId: cfg.agentId, userMessage, attachments, userFiles,
+        channel: 'discord',   // 여기서 건 예약은 디스코드로 간다(2026-08-20)
         emit: (ch, p) => { if (ch === 'status' && p && p.text) notifyStatus(p.text); }, // 유튜브 등 "받는 중"
         deliverFile: async ({ path: fp, name, note }) => {
           try { await msg.channel.send({ content: note || undefined, files: [{ attachment: fp, name }] }); }
