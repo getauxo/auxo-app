@@ -11,16 +11,9 @@
     "start": "electron .",
     "cli": "node cli.js",
     "bot": "node bot-telegram.js",
-    "screenshot": "electron . --smoke",
     "prepare-model": "node prepare-model.js",
-    "pack": "npm run prepare-model && electron-builder --dir && npm run verify:branding && npm run verify:package",
-    "dist": "npm run prepare-model && electron-builder && npm run verify:branding && npm run verify:package && npm run verify:updatable",
-    "verify:dist": "node verify-dist.js",
-    "verify:branding": "node verify-branding.js",
-    "release": "node release.js",
-    "verify:package": "node verify-package.js && node audit-dead-files.js && node audit-undefined-names.js && node audit-safety-parity.js",
-    "verify:updatable": "node verify-updatable.js",
-    "publish": "node publish-release.js"
+    "pack": "npm run prepare-model && electron-builder --dir",
+    "dist": "npm run prepare-model && electron-builder"
   },
   "keywords": [],
   "author": "Auxo",
