@@ -272,23 +272,37 @@ function moveFile(allowedDirs, from, to) {
   }
 }
 
-/** dir 하위에서 파일명에 query 가 포함된 것 검색(간단). max 개까지. */
+/**
+ * dir 하위에서 이름에 query 가 든 **파일과 폴더**를 찾는다. max 개까지.
+ *
+ * ★2026-08-22 실사용 사고: *"인스타이미지 폴더 이름 바꿔줘"* 에 **"폴더가 보이지 않습니다"** 라고 답했다.
+ *   그 폴더는 바탕화면 아래에 분명히 있었다.
+ *   원인 = 이 함수가 **폴더를 결과에 넣지 않았다.** 폴더는 안으로 들어가 보기만 하고(walk),
+ *   그 폴더 자체는 후보로 치지 않았다. 그래서 폴더 이름으로 찾으면 **언제나 빈손**이었다.
+ *   사용자는 폴더 이름으로 자주 찾는다 — 그때마다 "없다" 고 답하게 된다.
+ *
+ *   폴더가 걸려도 **안쪽은 계속 훑는다** — 사용자가 그 안의 파일을 찾는 중일 수도 있다.
+ *   결과에 folders 를 함께 준다: 경로만으로는 파일인지 폴더인지 알 수 없어
+ *   두뇌가 "그 폴더를 지워라" 같은 다음 행동을 못 고른다.
+ */
 function searchFiles(allowedDirs, dir, query, max = 50) {
   dir = _pick(allowedDirs, dir);
   if (!isAllowed(allowedDirs, dir)) return { error: '허용되지 않은 폴더예요.', needGrant: _norm(dir) };
   const q = String(query || '').toLowerCase();
   const hits = [];
+  const folders = [];
   (function walk(d) {
     if (hits.length >= max) return;
     let ents; try { ents = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
     for (const e of ents) {
       if (hits.length >= max) break;
       const fp = path.join(d, e.name);
+      const 걸림 = !q || e.name.toLowerCase().includes(q);
+      if (걸림) { hits.push(fp); if (e.isDirectory()) folders.push(fp); }
       if (e.isDirectory()) walk(fp);
-      else if (!q || e.name.toLowerCase().includes(q)) hits.push(fp);
     }
   })(_norm(dir));
-  return { matches: hits, truncated: hits.length >= max };
+  return { matches: hits, folders, truncated: hits.length >= max };
 }
 
 // 경로 자신 또는 부모 폴더가 실제로 존재하는지. 두뇌가 'C:\Users\User\...'처럼 지어낸 가짜 경로를

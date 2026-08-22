@@ -188,8 +188,8 @@ const DECLS = [
   },
   {
     name: 'search_files',
-    description: '폴더 하위에서 이름에 키워드가 든 파일을 찾는다. 허용된 폴더 안에서만.',
-    parameters: { type: 'object', properties: { dir: { type: 'string', description: '검색 시작 폴더' }, query: { type: 'string', description: '파일명 키워드(빈 값이면 전체)' } }, required: ['dir'] },
+    description: '폴더 하위에서 이름에 키워드가 든 **파일과 폴더**를 찾는다. 허용된 폴더 안에서만. 결과의 folders 에는 그중 폴더만 따로 담긴다 — 이름을 바꾸거나 지울 대상이 폴더인지 파일인지 여기서 가려라.',
+    parameters: { type: 'object', properties: { dir: { type: 'string', description: '검색 시작 폴더' }, query: { type: 'string', description: '이름 키워드(빈 값이면 전체). 폴더 이름도 찾는다' } }, required: ['dir'] },
   },
   {
     name: 'search_memory',

@@ -128,7 +128,7 @@ async function checkNotice() {
 // 설치가 끝난 뒤에도 받아둔 설치본이 캐시에 그대로 남는다(실측: 업데이트 1회에 510MB).
 //   우리 앱이 원래 큰 편이라 그냥 두면 사용자 디스크를 계속 먹는다.
 //   ★이미 설치된 버전의 잔여물만 지운다 — 아직 설치 안 된 대기분(현재보다 높은 버전)은 건드리지 않는다.
-function cleanupUpdaterCache() {
+function cleanupUpdaterCache(재시도남음 = 3) {
   try {
     const base = process.env.LOCALAPPDATA;
     if (!base) return;
@@ -152,7 +152,14 @@ function cleanupUpdaterCache() {
     //   그래서 코드 몇 줄만 바뀐 판에도 매번 275MB 를 통째로 받았다(실측 2026-08-16).
     //   용량은 이 파일 하나(약 275MB)로 고정된다 — 쌓이지 않으므로 그대로 둔다.
     logError('updater', { message: `설치 끝난 잔여물 정리 (${name}) — 차등 업데이트용 installer.exe 는 남긴다` });
-  } catch (e) { logError('updater:cleanup', e); }
+  } catch (e) {
+    logError('updater:cleanup', e, 재시도남음 > 0 ? `${재시도남음}번 더 해본다` : '더 안 해본다');
+    // ★한 번 실패하면 그걸로 끝이었다 → **275MB 가 그대로 남았다**(2026-08-22 실측).
+    //   원인은 EPERM — 설치 프로그램이 끝나면서 앱을 바로 띄우는데, 그 순간 폴더를 아직 놓지 않았다.
+    //   **업데이트할 때마다 같은 타이밍에 걸린다.** 즉 "매번 실패하는 정리 코드"였다.
+    //   잠깐 잠긴 것뿐이라 조금 뒤엔 풀린다(실측: 몇 분 뒤 확인하니 안 잠겨 있었다).
+    if (재시도남음 > 0) setTimeout(() => cleanupUpdaterCache(재시도남음 - 1), 20000);
+  }
 }
 
 // ── 자동 업데이트 ────────────────────────────────────────────────────
