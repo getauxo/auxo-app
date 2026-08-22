@@ -16,6 +16,7 @@
  */
 'use strict';
 const fsTools = require('./fs-tools'); // 공통 파일 도구 코어(허용폴더 한정)
+const grants = require('./grants');
 const fs = require('fs');
 const path = require('path');
 const procTools = require('./proc-tools'); // 공통 셸 실행 코어(허용폴더 cwd + 위험명령 차단)
@@ -319,9 +320,8 @@ function makeExecute(ctx) {
         }
       }
       if (r && r.needGrant) {
-        const gdir = require('path').dirname(r.needGrant); // 허용은 상위 폴더 단위(파일 하나만 아니라 그 폴더)
-        try { const fr = storage.loadAgent(agentId); if (fr) { fr.pendingGrant = { kind: 'dir', dir: gdir }; storage.saveAgent(fr); if (agent) agent.pendingGrant = fr.pendingGrant; } } catch (_) {}
-        r.message = `'${gdir}' 폴더는 아직 허용되지 않았어. 이건 사용자만 허용할 수 있어(네가 직접 허용 못 함). 사용자에게 "이 폴더에 접근해도 될까요?"라고 묻고, 사용자가 허락하면 그다음에 다시 시도해.`;
+        // ★허락은 grants 한 곳에서만 건다 — 전엔 여기·auxo-mcp·engine 이 따로 걸어 문구까지 갈라졌다.
+        Object.assign(r, grants.ask(agentId, 'dir', { path: r.needGrant, agent }));
       }
       return r;
     }
@@ -341,16 +341,14 @@ function makeExecute(ctx) {
     if (n === 'run_shell') {
       const auto = agent && agent.trustLevel === 'autonomous';
       if (!(agent && agent.allowShell) && !auto) {
-        try { const fr = storage.loadAgent(agentId); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); if (agent) agent.pendingGrant = fr.pendingGrant; } } catch (_) {}
-        return { needGrantShell: true, message: '터미널 명령 실행은 아직 허용되지 않았어. 이건 사용자만 허용할 수 있어. 사용자에게 "터미널 명령 실행을 허용할까요?"라고 묻고, 허락하면 다시 시도해.' };
+        return grants.ask(agentId, 'shell', { agent });
       }
       return procTools.runShell((agent && agent.allowedDirs) || [], args.command, args.cwd);
     }
     if (n === 'run_code') {
       const auto = agent && agent.trustLevel === 'autonomous';
       if (!(agent && agent.allowShell) && !auto) {
-        try { const fr = storage.loadAgent(agentId); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); if (agent) agent.pendingGrant = fr.pendingGrant; } } catch (_) {}
-        return { needGrantShell: true, message: '코드 실행은 아직 허용되지 않았어. 이건 사용자만 허용할 수 있어. 사용자에게 "코드/명령 실행을 허용할까요?"라고 묻고, 허락하면 다시 시도해.' };
+        return grants.ask(agentId, 'code', { agent });
       }
       // `lang` 도 받는다 — 선언은 language 로 명확한데도 두뇌가 lang 으로 보낸다(gemini 실측).
       // 스키마를 지키게 만들 방법이 우리에겐 없다. 사용자 입장에선 되는 게 중요하다.

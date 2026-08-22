@@ -218,6 +218,58 @@ ${msg.slice(0, 500)}`
   } catch (_) { return { need: false, kind: 'none' }; }
 }
 
+/**
+ * 두뇌가 **실행하려던 명령 한 줄**만 뽑는다. 실행은 하지 않는다.
+ *
+ * ★왜 (2026-08-21 실측, codex 구독):
+ *   *"node 버전 좀 확인해줘"* 에 codex 는 **자기 셸**을 집었다가 막히고
+ *   *"실행 정책에서 차단됐어요"* 로 끝냈다. 우리 run_shell 은 멀쩡히 옆에 있었다.
+ *   되돌림 2회를 다 써도 **0/6**. 프롬프트로도 두 번 실패했다(8-15, 8-21).
+ *   2×2 로 갈라 재보니 **"한 줄 일 + 폴더 얘기 없음"** 칸만 0/6 이고
+ *   나머지 셋은 4/6 였다. 어느 한 축이 범인이 아니라 **둘 다 없을 때** 무너진다.
+ *
+ *   명령 자체는 **두뇌가 이미 만들어놨다** — 답변에 `node --version` 이라고 적혀 있다.
+ *   못 만드는 게 아니라 **통로를 잘못 고른 것**이다. 그래서 통로만 우리가 갈아끼운다.
+ *
+ * ★검색(webSearch)과 다르게 가는 이유
+ *   검색은 판정기가 **검색어를 새로 지어도** 안전했다 — 읽기 전용이라 틀려야 결과가 이상할 뿐이다.
+ *   셸은 틀리면 **실제로 뭔가 벌어진다.** 그래서 새로 짓지 않고 **이미 하려던 것만** 뽑는다.
+ *   못 뽑으면 빈 문자열 — 억지로 만들지 않는다.
+ */
+const SHELL_CMD_SYSTEM = `에이전트가 방금 명령을 실행하려다 실패했다.
+**실행하려던 명령 한 줄**을 그대로 뽑아라.
+
+규칙
+  · 답변 안에 명령이 적혀 있으면 **그것을 그대로** 쓴다. 고쳐 쓰지 마라.
+  · 적혀 있지 않으면, 사용자 요청을 이 OS 에서 이루는 **가장 단순한 한 줄**을 쓴다.
+  · **새로운 일을 보태지 마라.** 사용자가 부탁한 것만.
+  · 파일을 지우거나 바꾸거나 설치하는 명령은 **뽑지 마라.** 확인·조회만.
+  · 무슨 명령인지 분명하지 않으면 **빈 문자열**로 둔다. 지어내지 마라.
+
+출력: JSON 한 줄만. 다른 말 금지.
+{"command":""}`;
+
+async function extractShellCommand(userMessage, assistantText, osName, generate) {
+  if (typeof generate !== 'function') return '';
+  const user = `[이 컴퓨터] ${String(osName || '')}
+
+[사용자가 부탁한 것]
+${String(userMessage || '').slice(0, 300)}
+
+[에이전트가 방금 한 답]
+${String(assistantText || '').slice(0, 600)}`;
+  let raw;
+  try { raw = await generate(SHELL_CMD_SYSTEM, user, { tools: false, timeout: 20000, temperature: 0, maxTokens: 80 }); }
+  catch (_) { return ''; }
+  const m = String(raw || '').match(/\{[\s\S]*?\}/);
+  if (!m) return '';
+  try {
+    const c = String(JSON.parse(m[0]).command || '').trim();
+    // 한 줄만. 여러 줄이 오면 **첫 줄만** 쓴다 — 이어붙인 명령을 통째로 돌리지 않는다.
+    return c.split(/[\r\n]/)[0].trim().slice(0, 300);
+  } catch (_) { return ''; }
+}
+
 // ── 3차: 대조 ───────────────────────────────────────────────────────────
 /**
  * @returns {Promise<{suspect:boolean, claims:string[], calledTools:string[]}>}
@@ -397,4 +449,4 @@ function requestFailNotice(kind, speech) {
   return `\n\n(솔직히 덧붙이면 — ${말} ${ㅁ.다시})`;
 }
 
-module.exports = { mayClaimCompletion, extractClaims, needsTool, check, buildNudge, buildRequestNudge, failNotice, requestFailNotice, DONE_HINT, NEED_TOOL_SYSTEM };
+module.exports = { mayClaimCompletion, extractClaims, needsTool, check, buildNudge, buildRequestNudge, failNotice, requestFailNotice, extractShellCommand, DONE_HINT, NEED_TOOL_SYSTEM, SHELL_CMD_SYSTEM };

@@ -20,6 +20,7 @@ const subagents = require('./subagents');
 const skillsRegistry = require('./skills-registry');
 const mcpManager = require('./mcp-manager');
 const fsTools = require('./fs-tools');
+const grants = require('./grants');
 const procTools = require('./proc-tools');
 const webSearchTool = require('./web-search');
 const scheduler = require('./scheduler');
@@ -290,9 +291,9 @@ const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.i
         }
       }
       if (r && r.needGrant) {
-        const gdir = path.dirname(r.needGrant); // 허용은 상위 폴더 단위
-        try { const fr = storage.loadAgent(AGENT_ID); if (fr) { fr.pendingGrant = { kind: 'dir', dir: gdir }; storage.saveAgent(fr); } } catch (_) {}
-        r.message = `'${gdir}' 폴더는 아직 허용 안 됐어. 이건 사용자만 허용할 수 있어(네가 직접 허용 못 함). 사용자에게 "이 폴더에 접근해도 될까요?"라고 묻고, 허락하면 그다음에 다시 시도해.`;
+        // ★허락은 grants 한 곳에서만 건다 — 전엔 여기와 agent-tools 가 따로 걸어
+        //   문구까지 갈라져 있었다("허용되지 않았어" vs "허용 안 됐어"). 채널마다 다른 말이 나갔다.
+        Object.assign(r, grants.ask(AGENT_ID, 'dir', { path: r.needGrant }));
       }
     }
     else if (name === 'grant_dir' || name === 'grant_shell') {
@@ -313,8 +314,7 @@ const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.i
     else if (name === 'run_shell') {
       const ag = storage.loadAgent(AGENT_ID) || {};
       if (!ag.allowShell && ag.trustLevel !== 'autonomous') {
-        try { const fr = storage.loadAgent(AGENT_ID); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); } } catch (_) {}
-        r = { needGrantShell: true, message: '터미널 명령 실행은 아직 허용 안 됐어. 이건 사용자만 허용할 수 있어. 사용자에게 허락을 구하고, 허락하면 다시 시도해.' };
+        r = grants.ask(AGENT_ID, 'shell');
       } else {
         r = procTools.runShell(ag.allowedDirs || [], args && args.command, args && args.cwd);
       }
@@ -322,8 +322,7 @@ const LOCAL_DECLS = toolDecls.toMcp(localTools.DECLS.filter((d) => LOCAL_NAMES.i
     else if (name === 'run_code') {
       const ag = storage.loadAgent(AGENT_ID) || {};
       if (!ag.allowShell && ag.trustLevel !== 'autonomous') {
-        try { const fr = storage.loadAgent(AGENT_ID); if (fr) { fr.pendingGrant = { kind: 'shell' }; storage.saveAgent(fr); } } catch (_) {}
-        r = { needGrantShell: true, message: '코드 실행은 아직 허용 안 됐어. 이건 사용자만 허용할 수 있어. 사용자 허락 후 다시 시도해.' };
+        r = grants.ask(AGENT_ID, 'code');
       } else {
         // `lang` 도 받는다(agent-tools 같은 자리의 주석 참고) — 채널이 달라도 같게.
         r = procTools.runCode(ag.allowedDirs || [], args && (args.language || args.lang), args && args.code, args && args.cwd);

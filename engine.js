@@ -36,6 +36,7 @@ const mcpManager = require('./mcp-manager');
 const learnSkill = require('./learn-skill'); // P3.2 자가학습 reflection
 const toolTransparency = require('./tool-transparency'); // 안전장치 3: 도구 사용 투명 표시
 const claimCheck = require('./claim-check'); // 정직 계층 ⑤: 말과 행동 대조
+const grants = require('./grants');
 const memoryPost = require('./memory-post'); // 대화 후 기억 후처리(추출·압축·망각·정리·루틴) 공통 모듈
 const memorySearch = require('./memory-search'); // 기억 v3: 일화 자동 회상(선제 주입) + 검색
 
@@ -435,25 +436,20 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
 
   // ── 파일/셸 접근 허용: 직전 턴 '허용 대기'를 이번 사용자 답으로 소비(모든 두뇌·채널 공통). ──
   //    허용 결정권은 모델이 아니라 사용자에게 있다(grant_dir/grant_shell 도구 제거). 엔진이 사용자 답으로만 허용.
-  if (agent.pendingGrant) {
-    const pg = agent.pendingGrant;
-    const gVerdict = await judgeApproval(generate, userMessage, pg.kind === 'shell' ? '터미널 명령 실행' : `'${pg.dir}' 폴더 접근`);
-    const gCancel = gVerdict === 'REJECT';
-    const gAuto = gVerdict === 'AUTO';
-    const gApprove = gVerdict === 'APPROVE';
-    const fr = storage.loadAgent(agentId) || agent;
-    fr.pendingGrant = null; // one-shot
-    if (gCancel && !gAuto) {
-      approvalNote += `\n[시스템 알림: 사용자가 '${pg.dir || '터미널 실행'}' 접근을 거절했어. 그 작업은 하지 말고 다른 걸 도와줘.]`;
-    } else if (gApprove || gAuto) {
-      if (gAuto) fr.trustLevel = 'autonomous';
-      if (pg.kind === 'shell') { fr.allowShell = true; approvalNote += `\n[시스템 알림: 사용자가 터미널 명령 실행을 허용했어. 하려던 작업을 이어서 진행해.]`; }
-      else if (pg.dir) { fr.allowedDirs = fr.allowedDirs || []; if (!fr.allowedDirs.some(d => d === pg.dir)) fr.allowedDirs.push(pg.dir); approvalNote += `\n[시스템 알림: 사용자가 '${pg.dir}' 폴더 접근을 허용했어. 하려던 파일 작업을 이어서 진행해.]`; }
-    } else {
-      fr.pendingGrant = pg; // 애매한 답 → 다시 잡아두고 재확인
-      approvalNote += `\n[시스템 알림: '${pg.dir || '터미널 실행'}' 허용 대기 중인데 명확한 승인/거절이 아니야. 사용자에게 간단히 다시 확인해.]`;
-    }
-    storage.saveAgent(fr);
+  //    ★상태를 다루는 것은 **grants 가 한다.** 여기는 사용자 말을 판정해 넘기고, 결과를 두뇌에게 전할 뿐이다.
+  //      전엔 허락을 **거는 곳이 7군데**(agent-tools 3 · auxo-mcp 3 · 여기 1)였고 소비는 여기뿐이라,
+  //      규칙이 어디 있는지 알 수 없었고 실제로 안내 문구까지 갈라져 있었다 — 채널마다 다른 말이 나갔다.
+  const _대기 = grants.pending(agentId);
+  if (_대기) {
+    const gVerdict = await judgeApproval(generate, userMessage, _대기.kind === 'shell' ? '터미널 명령 실행' : `'${_대기.dir}' 폴더 접근`);
+    const g = grants.consume(agentId, gVerdict);
+    const _이름 = g.dir || '터미널 실행';
+    if (g.결과 === 'reject') approvalNote += `\n[시스템 알림: 사용자가 '${_이름}' 접근을 거절했어. 그 작업은 하지 말고 다른 걸 도와줘.]`;
+    else if (g.결과 === 'approve') approvalNote += g.kind === 'shell'
+      ? `\n[시스템 알림: 사용자가 터미널 명령 실행을 허용했어. 하려던 작업을 이어서 진행해.]`
+      : `\n[시스템 알림: 사용자가 '${g.dir}' 폴더 접근을 허용했어. 하려던 파일 작업을 이어서 진행해.]`;
+    else approvalNote += `\n[시스템 알림: '${_이름}' 허용 대기 중인데 명확한 승인/거절이 아니야. 사용자에게 간단히 다시 확인해.]`;
+    const fr = g.agent || storage.loadAgent(agentId) || agent;
     agent.allowedDirs = fr.allowedDirs; agent.allowShell = fr.allowShell; agent.trustLevel = fr.trustLevel; agent.pendingGrant = fr.pendingGrant;
   }
 
@@ -920,6 +916,7 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
   //   근거·설계 = claim-check.js. 실패해도 대화는 그대로 나간다(검사가 답을 막지 않는다).
   const _원래답 = response;   // 되돌림이 답을 **더 나쁘게** 만들 수 있어 원본을 쥐고 있는다(아래 참조)
   let _정직안내 = '';           // 두 번 다 실패했을 때 사용자에게 붙일 말(아래에서 마지막에 붙인다)
+  let _허락묻는턴 = false;      // 되돌림이 "허락을 물어라"였던 턴 — 아래 되돌리기에서 예외로 둔다
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
       const v = await claimCheck.check({
@@ -998,10 +995,83 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
           }
         } catch (e) { console.error('[claim] 대신 검색 실패(무시):', e.message); }
       }
-      const _nudge = v.reason === 'request'
-        ? claimCheck.buildRequestNudge(v.kind, known, userMessage)
-        : claimCheck.buildNudge(v.claims, known);
-      const _nudgeFull = _nudge + _준검색;   // 대신 찾아온 게 있으면 재료로 함께 넘긴다
+      // ── 셸도 되돌림이 안 통한다 → **통로만 우리가 갈아끼운다** ─────────────
+      //   실측(2026-08-21, codex 구독): *"node 버전 좀 확인해줘"* 에 **자기 셸**을 집었다가
+      //   막히고 *"실행 정책에서 차단됐어요"* 로 끝냈다. 우리 run_shell 은 옆에 멀쩡히 있었다.
+      //   2×2 로 갈라 6판씩 재보니 —
+      //         · "한 줄 일 + 폴더 얘기 없음"  → **0/6** (되돌림 2회를 다 쓰고도)
+      //         · 나머지 세 칸                → 4/6
+      //   어느 한 축이 범인이 아니라 **둘 다 없을 때** 무너진다. 도구 설명 문구는 원인이 아니었다
+      //   (문구에서 "허용된 폴더를 작업위치로"를 빼고 재봤다 — 0/6 → 1/6, 기준 미달).
+      //   그리고 **실패한 판은 전부 되돌림 2회를 다 쓴 뒤 실패**했다. 늘려도 소용없다는 뜻이다.
+      //
+      //   ★검색과 **다르게** 간다. 검색은 판정기가 검색어를 새로 지어도 안전했다(읽기 전용).
+      //     셸은 틀리면 실제로 뭔가 벌어진다 → **새로 짓지 않고, 하려던 명령만 뽑는다.**
+      //     명령 자체는 두뇌가 이미 만들어놨다(답변에 `node --version` 이라고 적혀 있다).
+      //     못 만드는 게 아니라 **통로를 잘못 고른 것**이라, 통로만 바꾼다.
+      //
+      //   ★★허락은 사용자만 한다 — 이 선은 안 넘는다.
+      //     아직 허용 전이면 **실행하지 않는다.** 대신 허용 요청을 띄운다:
+      //     codex 는 도구를 아예 안 불러서 **그 요청조차 안 생기고 있었다**(실측 허용요청 0/3).
+      //     사용자는 "차단됐다"는 말만 듣고 켤 기회를 못 받았다. 그게 더 나쁘다.
+      let _준셸 = '', _셸대신함 = false, _셸허락필요 = false;
+      if (v.reason === 'request' && v.kind === 'shell' && attempt === 0) {
+        try {
+          const _자율 = agent.trustLevel === 'autonomous';
+          if (!agent.allowShell && !_자율) {
+            if (!(grants.pending(agentId) || {}).kind) {
+              grants.ask(agentId, 'shell', { agent });   // ★허락은 grants 한 곳에서만 건다
+              console.warn('[claim] 셸이 필요한데 아직 허용 전 — 허용 요청을 우리가 띄운다');
+            }
+            // ★허락은 **다음 사용자 말**로 받는다(위 pendingGrant 소비 자리). 버튼이 아니라 대화다.
+            //   그래서 에이전트가 **실제로 물어야** 사용자가 켤 기회를 얻는다.
+            //   묻지 않고 *"정책상 차단됐어요"* 로 끝내면, 허용 요청은 떠 있는데
+            //   사용자는 그런 게 있는 줄도 모른다 — 그게 지금까지의 모습이었다.
+            _셸허락필요 = true; _허락묻는턴 = true;
+            _준셸 = '\n\n[사실] 터미널 명령 실행은 **사용자만 켤 수 있다.** 지금은 꺼져 있다.'
+              + `\n[사용자가 부탁한 것] ${String(userMessage).slice(0, 200)}`;
+          } else {
+            const _cmd = await claimCheck.extractShellCommand(userMessage, response, _osName, generate);
+            if (_cmd) {
+              // 우리 run_shell 코어를 그대로 지난다 → 파괴적 명령 차단·보호경로 차단이 전부 붙는다.
+              const _r = require('./proc-tools').runShell(agent.allowedDirs || [], _cmd);
+              try { storage.recordToolCall(agentId, 'run_shell', !(_r && (_r.error || _r.blocked))); } catch (_) {}
+              if (_r && _r.ok) {
+                // ★말이 새지 않게 못박는다. 안 박으면 이렇게 나간다(실측 2/6) —
+                //   *"사용자님이 붙여주신 실제 실행 결과 기준으로는…"* · *"정책에 막혀서 직접 확인은 못 했어요"*
+                //   우리가 준 재료를 **남이 준 것**처럼 말해버린다. 사용자는 준 적이 없다.
+                //   이건 내부 사정이라 대화에 나오면 안 된다 — **결과만** 자기 말로 전해야 한다.
+                _준셸 = `\n\n[명령 실행 결과 — **네가 부른 도구가 돌려준 값이다.** 이것만 근거로 답해라.]\n`
+                  + `$ ${_cmd}\n${String(_r.stdout || '').slice(0, 2000)}\n`
+                  + `★이 결과가 어디서 왔는지는 **말하지 마.** "사용자가 준"·"붙여주신"·"정책에 막혀서"·`
+                  + `"직접 확인은 못 했지만" 같은 말은 금지다. 네가 확인한 것으로 **결과만** 전해라.\n`
+                  + `여기 없는 값은 쓰지 마.`;
+                _셸대신함 = true;
+                console.warn(`[claim] 셸은 되돌림이 안 통한다 — 우리가 대신 돌린다: ${_cmd}`);
+              } else {
+                const _왜 = (_r && (_r.error || _r.stderr)) || '알 수 없는 실패';
+                _준셸 = `\n\n[명령 실행 결과 — 우리가 실제로 돌렸고 **실패했다.**]\n$ ${_cmd}\n${String(_왜).slice(0, 600)}\n`
+                  + `이 실패를 사용자에게 **그대로** 전해라. 지어내지 말고.`;
+                console.warn(`[claim] 대신 돌렸으나 실패: ${_cmd} — ${String(_왜).slice(0, 80)}`);
+              }
+            }
+          }
+        } catch (e) { console.error('[claim] 대신 셸 실패(무시):', e.message); }
+      }
+      // ★이미 우리가 돌려서 결과가 있으면 **되돌림 문구를 붙이지 않는다.**
+      //   되돌림 문구는 *"너 도구를 안 불렀다, 불러라"* 는 말이라 두뇌를 **실패 틀**에 앉힌다.
+      //   그 틀에서 답하면 결과를 손에 쥐고도 *"정책에 막혔지만 제공된 결과로는…"* 이라고 나간다(실측).
+      //   할 일이 이미 끝났으면 남은 일은 **결과를 사용자 말로 옮기는 것**뿐이다.
+      const _nudge = _셸대신함
+        ? '사용자에게 답할 차례다. 아래 결과를 네 말로 전해라.'
+        : _셸허락필요
+        ? '사용자에게 **터미널 명령 실행을 허용해도 되는지 물어라.** 한 문장이면 된다.\n'
+          + '★"정책에 막혔다"·"차단됐다"·"권한이 없다" 같은 말은 **쓰지 마.** 그건 우리 사정이지 사용자가 알 일이 아니다.\n'
+          + '무엇을 하려는지 짧게 말하고 허락해줄지 물어라. 사용자가 다음 말로 허락하면 바로 이어서 한다.'
+        : (v.reason === 'request'
+          ? claimCheck.buildRequestNudge(v.kind, known, userMessage)
+          : claimCheck.buildNudge(v.claims, known));
+      const _nudgeFull = _nudge + _준검색 + _준셸;   // 대신 해온 게 있으면 재료로 함께 넘긴다
       //   ★도구를 다시 쓸 수 있어야 의미가 있다 → 원래 턴과 같은 도구 조건으로 되돌린다.
       const retry = await generate(systemPrompt, _nudgeFull, {
         tools: true, webSearch: WEBSEARCH_BRAINS.has(agent.brainMode),
@@ -1010,6 +1080,10 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
         agentId, dataPath: path.dirname(storage.getDataPath()),
       });
       if (retry && String(retry).trim()) response = String(retry).trim(); else break;
+      // ★허락을 물었으면 **거기서 끝이다.** 한 번 더 검사해봐야 도구는 여전히 0 이고
+      //   (허락 전이니 당연하다) 두뇌 호출만 한 번 더 쓰고 *"실제로 실행하지는 못했습니다"* 라는
+      //   군더더기가 붙는다 — 방금 허락을 물어놓고 또 묻는 꼴이다.
+      if (_허락묻는턴) break;
     }
   } catch (err) { console.error("[claim] 대조 실패(무시):", err.message); }
 
@@ -1021,7 +1095,11 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
   //   ※ "우리가 대신 검색"한 턴은 장부에 web_search 가 남아 여기서 안 되돌린다 — 맞다.
   //     장부가 묻는 건 **일이 실제로 일어났나**이고, 우리가 부른 것도 실제로 일어난 것이다
   //     (엔진이 네이티브 검색에도 같은 방식으로 남긴다 — 위 evidenceSink 자리).
-  if (response !== _원래답) {
+  //   ※ **허락을 물으라고 되돌린 턴은 예외다.** 그 턴은 도구를 안 부르는 게 맞다 —
+  //     허락은 사용자만 켤 수 있으니 에이전트가 할 일은 **묻는 것**뿐이다.
+  //     여기서 되돌리면 애써 물어본 답이 버려지고 *"정책상 차단됐어요"* 가 그대로 나간다(실측 0/4).
+  //     그러면 허용 요청은 떠 있는데 사용자는 그런 게 있는 줄도 모른다.
+  if (response !== _원래답 && !_허락묻는턴) {
     let _결국불렀나 = [];
     try { _결국불렀나 = storage.toolAttemptsSince(agentId, _turnStartTs) || []; } catch (_) {}
     if (!_결국불렀나.length) {
