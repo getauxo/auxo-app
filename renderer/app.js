@@ -31,6 +31,8 @@ function showScreen(id) {
 const SPLASH_START = Date.now();
 // 업데이트를 설치하는 중이면 스플래시를 걷지 않는다 — 곧 앱이 닫혔다가 새 버전으로 다시 열린다.
 let 설치중 = false;
+let _설치시작 = 0;                 // 설치안내() 가 잠근 시각 — 잘못 잠겼을 때 풀기 위해 잰다
+const 설치대기상한 = 180000;       // 3분. 실제 설치는 20~90초면 끝나고 그 사이 앱이 종료된다
 // 업데이트가 정리될 때까지 스플래시를 붙잡아 둔다.
 //   ★왜: 정한 그림(2026-08-16) = "앱을 종료했다가 다시 실행할 때 자동 업데이트되면서
 //     그때 진행바가 보이는 상태였다가 완료되면 앱이 실행되는 것".
@@ -47,7 +49,15 @@ function 업데이트정리중() {
   return st === 'checking' || st === 'downloading' || st === 'installing';
 }
 function hideSplash() {
-  if (설치중) return;
+  // ★설치 중이면 스플래시를 그대로 둔다 — 곧 앱이 닫히고 새 버전으로 다시 열린다.
+  //   다만 **무한정 두지 않는다.** 잠갔는데 설치가 끝내 시작되지 않으면 앱이 영영 안 열린다
+  //   (2026-08-22 실사용: 받아둔 것이 있다는 이유로 잘못 잠겨 4분 넘게 멈췄다).
+  //   실제 설치는 20~90초면 끝나고 그 사이 앱이 종료된다. 3분이 지나도 살아 있으면 잘못 잠긴 것이다.
+  if (설치중) {
+    if (Date.now() - _설치시작 < 설치대기상한) { setTimeout(hideSplash, 1000); return; }
+    console.warn('[splash] 설치가 시작되지 않았다 — 잠금을 풀고 앱을 연다');
+    설치중 = false;
+  }
   const el = document.getElementById('splash');
   if (!el || el.style.display === 'none') return;
   // 업데이트가 도는 중이면 끝날 때까지 기다렸다가 다시 시도한다.
@@ -2338,9 +2348,19 @@ function 업데이트상태그리기(s) {
   }
 }
 
+/**
+ * 받아둔 새 버전이 있다는 것만 알린다. **잠그지 않는다.**
+ *   설치가 실제로 시작되면 그때 설치안내() 가 잠근다. 둘을 섞으면 앱이 안 열린다(위 init 주석).
+ */
+function 받아둔안내(version) {
+  const note = document.getElementById('splash-note');
+  if (note && !설치중) note.textContent = `새 버전 ${version ? 'v' + version + ' ' : ''}을 받아뒀어요. 곧 바뀝니다.`;
+}
+
 /** 업데이트 설치 중임을 스플래시에 띄우고 그대로 둔다. 곧 앱이 닫혔다 새 버전으로 다시 열린다. */
 function 설치안내(version) {
   설치중 = true;
+  _설치시작 = Date.now();
   const sp = document.getElementById('splash');
   if (sp) { sp.style.display = ''; sp.classList.remove('splash-hide'); }
   const note = document.getElementById('splash-note');
@@ -2356,8 +2376,14 @@ function 설치안내(version) {
     window.agentAPI.onUpdateState((s) => { _업데이트상태 = s; try { 업데이트상태그리기(s); } catch (_) {} });
     try { _업데이트상태 = await window.agentAPI.updateState(); } catch (_) {}
     window.agentAPI.onUpdateInstalling((d) => 설치안내(d && d.version));
+    // ★받아둔 것이 있어도 **잠그지 않는다.** 안내 문구만 바꾼다.
+    //   전엔 여기서 설치안내() 를 불러 `설치중 = true` 로 잠갔는데, 그건 **설치가 시작됐을 때**의 표시다.
+    //   받아두기만 하고 아직 시작 안 한 상태에서 잠그면 hideSplash 의 첫 줄(`if (설치중) return`)에
+    //   걸려 **스플래시가 영영 안 걷힌다** — 앱이 안 열린다(2026-08-22 실사용, 4분 넘게 멈춤).
+    //   그전까지는 켜자마자 설치돼서 "받아둔 채로 다시 켜는" 상황 자체가 안 생겨 못 봤다.
+    //   ※ 스플래시는 이걸로 안 잡아도 된다 — 곧 이어지는 checking·installing 단계가 잡아준다.
     const p = await window.agentAPI.updatePending();
-    if (p && p.version) 설치안내(p.version);
+    if (p && p.version) 받아둔안내(p.version);
   } catch (_) {}
   // 화면 구석 버전 — **실제 앱 버전**으로 채운다(index.html 에 번호를 박아두지 않는다).
   //   사용자가 자기 버전을 잘못 알면 "고쳤다는데 왜 그대로냐"를 되풀이하게 된다.
