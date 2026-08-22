@@ -236,6 +236,9 @@ function init(userDataPath) {
   _migrate(found, existed);
   try { require('./fs-tools').setDownloadDir(path.join(userDataPath, 'download')); } catch (_) {}
   try { require('./fs-tools').setProtectedDataPaths([userDataPath]); } catch (_) {}
+  // ★장부 정리는 **여기서** 한다 — 앱을 켤 때 한 번. 턴마다 지우면 쓸데없는 쓰기가 늘고,
+  //   호출자에게 맡기면 아무도 안 부른다(pruneToolCalls 가 실제로 그랬다 — 죽은 코드였다).
+  pruneLedgers();
 }
 
 /**
@@ -385,10 +388,32 @@ function toolAttemptsSince(agentId, sinceTs) {
   } catch (_) { return []; }
 }
 
-/** 장부가 무한히 자라지 않게 오래된 것을 지운다(기본 3일). */
+/** 장부가 무한히 자라지 않게 오래된 것을 지운다(기본 3일). 특정 에이전트만. */
 function pruneToolCalls(agentId, keepMs = 3 * 24 * 60 * 60 * 1000) {
   _requireDb();
   try { db.run('DELETE FROM tool_calls WHERE agent_id=? AND ts < ?', [agentId, Date.now() - keepMs]); } catch (_) {}
+}
+
+/**
+ * 장부 두 개(tool_calls · claim_checks)에서 오래된 것을 **모든 에이전트에 대해** 지운다.
+ *
+ * ★왜 이걸 따로 만드나 (2026-08-22):
+ *   `pruneToolCalls` 는 **만들어만 놓고 부르는 곳이 한 군데도 없었다.** 죽은 코드였다.
+ *   그래서 도구 장부는 처음부터 지금까지 **한 번도 정리된 적이 없다.**
+ *   정리 함수가 있다는 사실이 "정리되고 있다"는 착각을 만들었다 —
+ *   **배선되지 않은 안전장치는 없는 것과 같다.**
+ *   claim_checks 를 새로 만들면서 같은 실수를 반복할 뻔했다.
+ *
+ *   에이전트별로 부르게 두면 **호출자가 모든 에이전트를 훑어야** 해서 또 빠뜨린다.
+ *   그래서 여기서 한 번에 지우고, init 에서 한 줄로 부른다.
+ *
+ * 보관 기간: 도구 장부 3일(턴 대조용이라 그 이상 필요 없다) / 판정 장부 30일(추세를 봐야 한다).
+ */
+function pruneLedgers(toolKeepMs = 3 * 24 * 60 * 60 * 1000, claimKeepMs = 30 * 24 * 60 * 60 * 1000) {
+  if (!db) return;
+  const now = Date.now();
+  try { db.run('DELETE FROM tool_calls WHERE ts < ?', [now - toolKeepMs]); } catch (_) {}
+  try { db.run('DELETE FROM claim_checks WHERE ts < ?', [now - claimKeepMs]); } catch (_) {}
 }
 
 function appendMessages(agentId, newMessages) {
@@ -583,7 +608,7 @@ module.exports = {
   SCHEMA_VERSION,
   saveAgent, loadAgent, loadAllAgents,
   saveConversation, loadConversation, appendMessages,
-  recordToolCall, recordClaimCheck, toolCallsSince, toolAttemptsSince, pruneToolCalls,
+  recordToolCall, recordClaimCheck, toolCallsSince, toolAttemptsSince, pruneToolCalls, pruneLedgers,
   saveConversationSummary, loadConversationSummary,
   appendArchivedMessages, loadArchivedMessages, loadArchivedWindow, loadArchivedPage, archiveOldestActive,
   addEpisodes, markEpisodesPromoted,
