@@ -315,7 +315,34 @@ ipcMain.handle('update:pending', () => ({ version: 받아둔새버전() }));
 
 // 렌더러가 스플래시를 걷었다 = 사용자가 앱 화면을 보기 시작했다.
 //   이 뒤로는 업데이트가 앱을 건드리지 않는다.
-ipcMain.on('update:window-open', () => { _창열림 = true; });
+ipcMain.on('update:window-open', () => { _창열림 = true; 봇들켜기('창이 열렸다'); });
+
+/**
+ * 텔레그램·디스코드 봇을 켠다. **창이 열린 뒤에만.**
+ *
+ * ★왜 늦추나 (2026-08-22 실사용 사고):
+ *   업데이트 설치를 미루는 조건에 *"봇이 돌고 있으면 쓰는 중으로 본다"* 가 있다(대화시작됨).
+ *   그런데 봇은 앱을 켜자마자 함께 떴다 → **켤 때마다 그 조건에 걸려 매번 "다음에 켤 때"로 미뤄졌다.**
+ *   그 "다음"이 영원히 오지 않는다. 텔레그램을 연결해 둔 사용자는 **자동 업데이트가 아예 안 된다.**
+ *   실측: 실제 설치본이 0.2.30 에 묶여 뒤이은 네 판을 하나도 못 받았다(받아만 두고 매번 미룸).
+ *   ⚠️ 어제 업데이트 흐름을 고칠 때 **텔레그램을 안 켜고 시험해서** 못 봤다.
+ *
+ *   고치는 축을 "얼마나 오래 조용했나"(어림짐작) 가 아니라 **순서**로 잡는다 —
+ *   스플래시 → (있으면 업데이트 설치) → 앱 실행 → **그때 봇.**
+ *   스플래시 동안 봇이 없으니 걸릴 조건 자체가 없어진다.
+ *
+ *   대가: 봇이 몇 초 늦게 뜬다. **메시지는 안 잃는다** — 우리 봇은 long polling(getUpdates)이라
+ *   그동안 온 것은 텔레그램 서버가 들고 있다가 폴링을 재개하면 준다.
+ *   업데이트하는 날엔 어차피 앱이 꺼졌다 켜지므로 새로 생기는 손해가 거의 없다.
+ */
+let _봇시작됨 = false;
+function 봇들켜기(이유) {
+  if (_봇시작됨 || isSmokeMode) return;
+  _봇시작됨 = true;
+  console.log(`[bots] 시작 — ${이유}`);
+  restoreTelegram();
+  restoreDiscord();
+}
 
 // 화면이 물어볼 때 — 지금 상태를 그대로 준다.
 ipcMain.handle('update:state', () => ({ ..._updateState, current: app.getVersion() }));
@@ -452,9 +479,11 @@ app.whenReady().then(async () => {
   if (!isSmokeMode) 지난실행확인();   // 지난번이 어떻게 끝났는지 먼저 남긴다
   if (!isSmokeMode) { cleanupUpdaterCache(); setupAutoUpdate(); }
 
-  // 저장된 텔레그램 연결 자동 복원(smoke 제외)
-  if (!isSmokeMode) restoreTelegram();
-  if (!isSmokeMode) restoreDiscord();
+  // ★봇(텔레그램·디스코드)은 여기서 켜지 않는다 — **창이 열린 뒤**에 켠다(봇들켜기 주석 참고).
+  //   여기서 켜면 업데이트 설치가 매번 미뤄져 새 버전이 영영 안 깔린다.
+  //   안전장치: 스플래시 신호가 끝내 안 오면(렌더러 오류 등) 그래도 봇은 떠야 한다.
+  //   스플래시 대기 상한이 45초라 그보다 넉넉히 뒤에 둔다.
+  if (!isSmokeMode) setTimeout(() => 봇들켜기('안전장치 — 창 신호가 오지 않았다'), 90000);
   if (!isSmokeMode) startAppScheduler(); // 예약된 정기 작업 자동 실행(매분)
 
   app.on('activate', () => {
