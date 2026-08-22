@@ -840,6 +840,10 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
         auxoHttp,  // 구독 두뇌: 내장 auxo 도구 상시 게이트웨이 URL(있으면 stdio 대신 사용, 없으면 stdio 폴백)
 
         onDelta: _onDelta,  // 실시간 스트리밍(지원 두뇌만). 채널이 콜백 주입(앱=chat:stream), 미지정 시 최종 일괄.
+        // ★도구를 부르기 직전의 앞머리("I'll load the file tools…")를 **대화 본문 대신 상태 자리로** 보낸다.
+        //   다른 앱이 "웹 검색 중…"을 보여주는 것과 같다 — 정보는 그대로 보이고, 대화 기록에는 안 남는다.
+        //   유튜브 받는 중 안내가 쓰던 통로를 그대로 쓴다(emit('status') → chat:status).
+        onStatus: (m) => { try { emit('status', { text: String(m).slice(0, 120) }); } catch (_) {} },
         agentId, dataPath: path.dirname(storage.getDataPath()), // claude·codex 구독용(MCP 서버 주입) — 폴더 경로
         signal,  // (후속) 두뇌가 이 신호로 진행 중 fetch/자식 프로세스를 직접 취소하도록 배선 예정.
       });

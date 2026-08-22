@@ -633,6 +633,9 @@ function claudeGenerate(systemPrompt, userPrompt, opts = {}) {
         const sArgs = args.concat(['--output-format', 'stream-json', '--include-partial-messages', '--verbose']);
         const sproc = spawnClaude(sArgs, { cwd: tmpDir, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
         let acc = '', buf = '', done = false, stimer = null;
+        // 첫 도구 호출 전까지의 텍스트를 잠깐 참아둔다(위 주석). null = 더 이상 참지 않음.
+        let 앞머리 = '';
+        const 앞머리상한 = 200;   // 실측된 앞머리는 30~66자. 넘으면 앞머리가 아니라 답이다.
         let rerr = ''; // CLI 가 stdout 에 실어 보낸 실패 이유. 실패했을 때만 쓴다.
         // ⚠️ '총 시간'이 아니라 '무응답(idle)' 타임아웃 — 토큰이 흐르는 동안엔 죽이지 않는다.
         //   무거운 생성(예: 긴 HTML 한 벌)이 총 상한에 걸려 생성 도중 잘리던 문제를 이렇게 푼다.
@@ -655,12 +658,36 @@ function claudeGenerate(systemPrompt, userPrompt, opts = {}) {
             if (!line) continue;
             let o; try { o = JSON.parse(line); } catch (_) { continue; }
             const ev = (o && o.type === 'stream_event') ? o.event : null;
+            // ★도구를 부르기 **직전에 나오는 앞머리**는 대화 본문이 아니라 **상태**다.
+            //   실사용(2026-08-22, 테스터·claude 구독): "I'll load the file tools and take a look." 가
+            //   답변 첫 줄로 그대로 나갔다. 아우쿠소가 갑자기 영어로 혼잣말하는 것처럼 보인다.
+            //   K-7 로 2026-08-08 부터 쫓던 것 — 1층에 "과정은 말하지 마"를 넣어 30%→4.3% 로 줄였지만 0 이 아니었다.
+            //
+            //   [왜 낱말로 안 거르나]  표현은 무한하다("I'll check…"·"Let me…"·"먼저 …해볼게요").
+            //     대신 **구조**로 가른다 — 스트림에서 **첫 도구 호출 앞에 온 텍스트**면 앞머리다.
+            //     무슨 말이든 걸린다. 목록을 늘려갈 일이 없다.
+            //   [왜 지우지 않고 옮기나]  다른 앱들이 "웹 검색 중…"을 보여주는 것과 같은 정보다.
+            //     자리가 틀렸을 뿐이라, 상태 자리로 옮기면 사용자는 진행을 그대로 보고 기록은 깨끗해진다.
+            //   [안전]  도구 호출이 끝내 안 오면 그건 **진짜 답**이다 → 참았던 것을 그대로 흘려보낸다.
+            //     앞머리는 짧다(실측 30~66자) → 200자를 넘으면 답으로 보고 바로 푼다. 늦어야 1초 미만이다.
+            if (ev && ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'tool_use' && 앞머리 !== null) {
+              const p = 앞머리.trim();
+              앞머리 = null;                                   // 이 턴에서는 더 참지 않는다
+              if (p && typeof opts.onStatus === 'function') { try { opts.onStatus(p); } catch (_) {} }
+            }
             // 새 텍스트 블록 시작(도구 호출 사이/뒤 문구) — 이미 출력한 텍스트가 있으면 문단 구분을 넣어
             // "…열어볼게요.두 곳은…" 처럼 블록이 붙어버리는 run-on 을 방지한다.
             if (ev && ev.type === 'content_block_start' && ev.content_block && ev.content_block.type === 'text' && acc.trim()) {
               acc += '\n\n'; try { opts.onDelta('\n\n'); } catch (_) {}
             }
             if (ev && ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta' && ev.delta.text) {
+              if (앞머리 !== null) {
+                앞머리 += ev.delta.text;
+                if (앞머리.length <= 앞머리상한) continue;      // 아직 판단 보류 — 도구가 오면 상태로 뺀다
+                const 밀린것 = 앞머리; 앞머리 = null;            // 너무 길다 = 앞머리가 아니라 답이다
+                acc += 밀린것; try { opts.onDelta(밀린것); } catch (_) {}
+                continue;
+              }
               acc += ev.delta.text; try { opts.onDelta(ev.delta.text); } catch (_) {}
             }
             // ★CLI 는 실패 이유를 stderr 가 아니라 **여기 stdout 에 JSON 으로** 쓴다.
@@ -688,6 +715,12 @@ function claudeGenerate(systemPrompt, userPrompt, opts = {}) {
         if (sproc.stderr) sproc.stderr.on('data', (d) => { if (serr.length < 4000) serr += d.toString('utf8'); });
         sproc.on('error', (e) => finish(() => reject(e)));
         sproc.on('close', (code) => finish(() => {
+          // ★도구 호출이 끝내 안 왔다 = 참아둔 것은 앞머리가 아니라 **진짜 답**이다. 반드시 돌려준다.
+          //   이걸 빠뜨리면 짧은 답(도구 없는 잡담)이 통째로 사라진다.
+          if (앞머리 !== null && 앞머리) {
+            acc += 앞머리; try { opts.onDelta(앞머리); } catch (_) {}
+            앞머리 = null;
+          }
           const out = acc.trim();
           if (out) return resolve(out);
           // 종료코드가 0 이어도 이유가 잡혔으면 실패다 — CLI 가 조용히 0 으로 끝내는 경우(한도 등)를 놓치지 않는다.
