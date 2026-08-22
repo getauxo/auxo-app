@@ -831,6 +831,8 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
     try {
       const _genP = generate(systemPrompt, userPrompt, {
         tools: true, webSearch: WEBSEARCH_BRAINS.has(agent.brainMode), // REST 두뇌용(함수 도구) + claude-api 네이티브 검색 스위치
+        // codex 구독: 자기 셸의 자물쇠를 **사용자가 허락했을 때만** 푼다(brain-codex 에서 씀).
+        allowShell: !!agent.allowShell || agent.trustLevel === 'autonomous',
         extraDecls, extraExecute, evidenceSink,  // + 검색근거 수집
         attachments: (Array.isArray(attachments) && attachments.length) ? attachments : undefined, // 파일 첨부(멀티모달) — 채널이 file-intake 로 만든 것
         imageFiles: (imageFiles && imageFiles.length) ? imageFiles : undefined, // claude 구독 비전(native Read로 이미지 파일 보기)
@@ -915,7 +917,6 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
   //   전엔 말 기준만 있어서 *"차단됐습니다"* 같은 **실패 주장**이 통째로 새 나갔다.
   //   근거·설계 = claim-check.js. 실패해도 대화는 그대로 나간다(검사가 답을 막지 않는다).
   const _원래답 = response;   // 되돌림이 답을 **더 나쁘게** 만들 수 있어 원본을 쥐고 있는다(아래 참조)
-  let _정직안내 = '';           // 두 번 다 실패했을 때 사용자에게 붙일 말(아래에서 마지막에 붙인다)
   let _허락묻는턴 = false;      // 되돌림이 "허락을 물어라"였던 턴 — 아래 되돌리기에서 예외로 둔다
   try {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -934,16 +935,29 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
       //   ★요청 기준에도 반드시 붙여야 한다. 검색이 특히 그렇다 —
       //     실측: 날씨를 안 찾아보고 수치와 **출처 링크까지 지어냈다.** 사용자는 그걸 믿는다.
       if (attempt === 1) {
-        //   ★안내는 response 에 바로 붙이지 않고 **따로 담는다.**
-        //     아래 "되돌림 되돌리기" 가 response 를 원래 답으로 갈아끼우는데,
-        //     바로 붙이면 그때 **정직 안내까지 같이 지워진다.**
-        // ★말투를 함께 넘긴다 — 이 문장은 **두뇌가 아니라 우리 코드가** 쓰는 말이라
-        //   1층 말투 설정이 안 닿는다. 안 넘기면 사용자가 존댓말을 정해뒀는데 여기만 반말이 된다
-        //   (2026-08-21 실사용에서 그렇게 나갔다).
-        const _말투 = agent.userSpeech || agent.speech || '';
-        _정직안내 = v.reason === 'request'
-          ? claimCheck.requestFailNotice(v.kind, _말투)
-          : claimCheck.failNotice(v.claims, _말투);
+        // ★2026-08-22: **사용자 화면에는 붙이지 않는다. 장부에만 남긴다.**
+        //
+        //   [왜 뺐나]  codex 자기 셸을 열자(사용자가 허락한 경우) **판정이 못 믿을 것이 됐다.**
+        //         codex 가 자기 손으로 한 일은 우리 tool_calls 에 안 남는다 → 멀쩡히 해놓고도
+        //         "도구 호출 0" 으로 찍힌다. 그 결과 한 답변 안에서 스스로를 부정했다(실측 3/3) —
+        //           *"써뒀습니다. (솔직히 덧붙이면 — 파일·폴더 쪽은 실제로 처리하지 못했습니다.)"*
+        //         사용자는 됐는지 안 됐는지 알 수 없게 된다. **틀린 경고는 경고가 아니다.**
+        //
+        //   [무엇을 잃나]  진짜로 안 했을 때도 사용자에게 안 알린다. 그건 감수한다 —
+        //         **되돌림 2회와 "우리가 대신 부르기"가 앞에 그대로 있다.** 이 문장은 셋 다
+        //         실패했을 때의 마지막 안전망이었고, 지금은 그 판정 자체를 못 믿는 상황이다.
+        //
+        //   [대신]  판정을 **claim_checks 장부에 남긴다.** 전엔 console.warn 뿐이라
+        //         배포된 앱에서는 흔적이 아예 없었다. 이제 실사용에서 헛짚은 비율을 잴 수 있다.
+        //         (이 PC 밖으로 나가지 않는다 — 전송 코드 없음)
+        try {
+          storage.recordClaimCheck(agentId, {
+            reason: v.reason, kind: v.kind, claims: v.claims,
+            retried: attempt + 1, resolved: false,
+            brain: agent.brainMode,
+            allowShell: !!agent.allowShell || agent.trustLevel === 'autonomous',
+          });
+        } catch (_) {}
         break;
       }
       // 되돌림 문구에 넣을 도구 이름.
@@ -1075,6 +1089,8 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
       //   ★도구를 다시 쓸 수 있어야 의미가 있다 → 원래 턴과 같은 도구 조건으로 되돌린다.
       const retry = await generate(systemPrompt, _nudgeFull, {
         tools: true, webSearch: WEBSEARCH_BRAINS.has(agent.brainMode),
+        // codex 구독: 자기 셸의 자물쇠를 **사용자가 허락했을 때만** 푼다(brain-codex 에서 씀).
+        allowShell: !!agent.allowShell || agent.trustLevel === 'autonomous',
         extraDecls, extraExecute,
         mcpHttp: (mcpHttp && mcpHttp.length) ? mcpHttp : undefined, auxoHttp,
         agentId, dataPath: path.dirname(storage.getDataPath()),
@@ -1107,8 +1123,8 @@ async function _runTurn({ agentId, userMessage, emit = () => {}, attachments, de
       response = _원래답;
     }
   }
-  // 정직 안내는 **맨 마지막에** 붙인다 — 위 되돌리기가 지나간 뒤라 안 지워진다.
-  if (_정직안내) response += _정직안내;
+  // (정직 안내를 사용자 화면에 붙이던 자리 — 2026-08-22 에 뺐다. 위 attempt===1 주석 참고.
+  //  판정은 claim_checks 장부에만 남는다. 사용자에게는 아무것도 덧붙이지 않는다.)
 
   // ── 정직 계층 ②: post-hoc 사실 검증 ─────────────────────────────
   // 검색 근거가 있을 때만(=실시간·사실 답변) 작동 → 잡담은 비용 0. 지지도 낮으면 말투만 눅인다(재생성 안 함).

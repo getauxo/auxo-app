@@ -212,7 +212,23 @@ function codexGenerate(systemPrompt, userPrompt, opts = {}) {
       //
       //   [남는 것]  `workspace-write` 는 작업폴더(아래 빈 임시 폴더)와 /tmp 에는 쓸 수 있다.
       //         그래서 아래 "빈 임시 폴더에서 실행"은 그대로 둔다 — 그게 작업폴더의 범위를 정한다.
-      args.push('-s', 'workspace-write');
+      //
+      // ★2026-08-22: **사용자가 셸을 허락했으면 codex 자기 손도 풀어준다.**
+      //   [왜]  codex 는 명령 한 줄짜리 부탁("node 버전 확인해줘")에서 **자기 셸을 먼저 집는다.**
+      //         그게 막혀 있으면 우리 run_shell 로 오지 않고 *"실행 정책에서 차단됐어요"* 로 끝냈다
+      //         (실측 2×2: "한 줄 일 + 폴더 얘기 없음" 칸만 0/6, 나머지 세 칸은 4/6).
+      //         codex CLI 는 **자기 손을 이름으로 끄는 수단을 주지 않는다** — claude 의 --disallowedTools 같은 게 없다.
+      //   [왜 workspace-write 가 아닌가]  그 값은 **무시된다**(codex 0.142.2 실측).
+      //         `-s` 자체는 먹는데 workspace-write 만 read-only 로 떨어진다. git 저장소 안·승인정책 변경·
+      //         --add-dir·전용 CODEX_HOME 까지 여덟 가지를 시도했고 전부 실패했다.
+      //         **폴더에 가두는 중간값이 없다** — 닫혀 있거나, 다 열리거나 둘 중 하나다.
+      //   [무엇을 잃나]  이 손에는 우리 안전장치가 **하나도 안 붙는다** —
+      //         파괴적 명령 차단 · 보호경로 차단 · 도구 호출 장부. 우리 run_shell 은 그대로 다 붙는다.
+      //   [그래서 조건]  **사용자가 셸을 허락한 경우에만** 푼다(allowShell / 자율도 autonomous).
+      //         허락 전에는 예전 그대로 닫아 둔다 — "허락은 사용자만 한다"는 선은 그대로다.
+      const _셸허락 = !!(opts && opts.allowShell);
+      if (_셸허락) args.push('-s', 'danger-full-access');
+      else args.push('-s', 'workspace-write');
     } else {
       // 기억 처리 등 도구가 필요 없는 호출은 **자물쇠를 그대로 둔다**(claude 와 동일).
       args.push('-s', 'read-only');

@@ -72,6 +72,23 @@ function _createSchema() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       agent_id TEXT, ts INTEGER, name TEXT, ok INTEGER);
     CREATE INDEX IF NOT EXISTS ix_toolcalls_agent ON tool_calls(agent_id, ts);
+
+    -- 정직 계층 판정 장부 (2026-08-22)
+    --   판정은 지금까지 **화면 콘솔로만** 나가고 아무 데도 안 남았다. 배포된 앱에서는 그대로 사라진다.
+    --   그래서 "얼마나 헛짚었나 / 되돌림이 통했나"를 나중에 볼 방법이 없었다.
+    --   ★사용자에게 붙이던 안내 문구를 **화면에서 뺀 대신**(codex 자기 셸을 열면 장부가 비어
+    --     멀쩡히 한 일도 "안 했다"로 찍혀 답이 스스로를 부정했다) 여기에 남긴다.
+    --   ⚠️ 이 기록은 **이 PC 밖으로 나가지 않는다.** 우리가 이 PC 에서 읽을 때만 쓴다.
+    CREATE TABLE IF NOT EXISTS claim_checks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT, ts INTEGER,
+      reason TEXT,      -- 'request'(요청 기준) | 'claim'(완료 주장 기준)
+      kind TEXT,        -- file|schedule|search|shell|other  (요청 기준일 때)
+      claims TEXT,      -- 완료 주장 목록(주장 기준일 때)
+      retried INTEGER,  -- 되돌림 횟수
+      resolved INTEGER, -- 끝내 도구를 불렀나(1) 아닌가(0)
+      brain TEXT, allow_shell INTEGER);   -- 판정을 못 믿는 조합인지 나중에 가르려고
+    CREATE INDEX IF NOT EXISTS ix_claimchecks_agent ON claim_checks(agent_id, ts);
   `);
 }
 
@@ -319,6 +336,25 @@ function recordToolCall(agentId, name, ok = true) {
   catch (_) { /* 장부 실패가 대화를 막지 않는다 */ }
 }
 
+/**
+ * 정직 계층 판정을 장부에 남긴다.
+ *
+ * ★왜 (2026-08-22): 판정은 여태 console.warn 으로만 나갔다 — 배포된 앱에서는 **아무 데도 안 남는다.**
+ *   사용자에게 붙이던 안내 문구를 화면에서 뺐으므로(engine 주석 참고), 남는 흔적이 여기뿐이다.
+ *   이 기록으로 나중에 **"헛짚은 비율 / 되돌림이 통한 비율"** 을 실제 사용에서 잴 수 있다.
+ * ⚠️ 이 PC 밖으로 나가지 않는다. 전송하는 코드는 없다.
+ */
+function recordClaimCheck(agentId, r = {}) {
+  _requireDb();
+  if (!agentId) return;
+  try {
+    db.run('INSERT INTO claim_checks(agent_id,ts,reason,kind,claims,retried,resolved,brain,allow_shell) VALUES(?,?,?,?,?,?,?,?,?)',
+      [agentId, Date.now(), String(r.reason || ''), String(r.kind || ''),
+        JSON.stringify(r.claims || []), Number(r.retried || 0),
+        r.resolved ? 1 : 0, String(r.brain || ''), r.allowShell ? 1 : 0]);
+  } catch (_) { /* 장부 실패가 대화를 막지 않는다 */ }
+}
+
 /** 특정 시각 이후 이 에이전트가 부른 도구 이름들(중복 제거). 턴 경계는 호출자가 ts 로 정한다. */
 function toolCallsSince(agentId, sinceTs) {
   _requireDb();
@@ -547,7 +583,7 @@ module.exports = {
   SCHEMA_VERSION,
   saveAgent, loadAgent, loadAllAgents,
   saveConversation, loadConversation, appendMessages,
-  recordToolCall, toolCallsSince, toolAttemptsSince, pruneToolCalls,
+  recordToolCall, recordClaimCheck, toolCallsSince, toolAttemptsSince, pruneToolCalls,
   saveConversationSummary, loadConversationSummary,
   appendArchivedMessages, loadArchivedMessages, loadArchivedWindow, loadArchivedPage, archiveOldestActive,
   addEpisodes, markEpisodesPromoted,
