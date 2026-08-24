@@ -954,8 +954,32 @@ function renderMarkdown(src) {
       out.push(tb + '</tbody></table>'); continue;
     }
     if (/^\s*>\s?/.test(line)) { const buf = []; while (i < lines.length && /^\s*>\s?/.test(lines[i])) { buf.push(lines[i].replace(/^\s*>\s?/, '')); i++; } out.push('<blockquote class="md-quote">' + buf.map(inline).join('<br>') + '</blockquote>'); continue; }
-    if (/^\s*[-*]\s+/.test(line)) { const buf = []; while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) { buf.push(lines[i].replace(/^\s*[-*]\s+/, '')); i++; } out.push('<ul class="md-list">' + buf.map(x => '<li>' + inline(x) + '</li>').join('') + '</ul>'); continue; }
-    if (/^\s*\d+\.\s+/.test(line)) { const buf = []; while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i])) { buf.push(lines[i].replace(/^\s*\d+\.\s+/, '')); i++; } out.push('<ol class="md-list">' + buf.map(x => '<li>' + inline(x) + '</li>').join('') + '</ol>'); continue; }
+    // ★목록 — **항목에 딸린 설명 줄을 그 항목에 붙인다.**
+    //   실사용 사고(2026-08-24): 답이 `1. 2. 3.` 으로 제대로 왔는데 화면엔 **1, 1, 1** 로 나왔다.
+    //   원인 = 항목 아래 들여쓴 설명 줄에서 목록이 **끊겨** 매번 새 <ol> 이 시작됐고,
+    //   <ol> 은 start 가 없으면 언제나 1부터 센다. 게다가 두뇌가 쓴 번호를 버리고 있었다.
+    //   항목마다 설명을 붙이는 건 아주 흔한 답변 형식이라 자주 걸린다.
+    //   ⚠️ inline() 이 HTML 을 escape 하므로 **줄마다 inline 을 돌리고 <br> 로 잇는다**(통째로 하면 태그가 글자로 보인다).
+    const 딸린줄 = (l) => /^\s+\S/.test(l) && !/^\s*(?:[-*]\s|\d+\.\s|>|\||#{1,3}\s|```)/.test(l);
+    const 항목모으기 = (다음항목) => {
+      const buf = [];
+      while (i < lines.length) {
+        const m = 다음항목(lines[i]);
+        if (m !== null) { buf.push([m]); i++; continue; }
+        if (buf.length && 딸린줄(lines[i])) { buf[buf.length - 1].push(lines[i].trim()); i++; continue; }
+        break;
+      }
+      return buf.map((parts) => '<li>' + parts.map(inline).join('<br>') + '</li>').join('');
+    };
+    if (/^\s*[-*]\s+/.test(line)) {
+      const li = 항목모으기((l) => (/^\s*[-*]\s+/.test(l) ? l.replace(/^\s*[-*]\s+/, '') : null));
+      out.push('<ul class="md-list">' + li + '</ul>'); continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const 시작 = parseInt(line.match(/^\s*(\d+)\./)[1], 10);   // 두뇌가 쓴 번호를 살린다(3. 부터 시작해도 3으로)
+      const li = 항목모으기((l) => (/^\s*\d+\.\s+/.test(l) ? l.replace(/^\s*\d+\.\s+/, '') : null));
+      out.push('<ol class="md-list"' + (시작 > 1 ? ' start="' + 시작 + '"' : '') + '>' + li + '</ol>'); continue;
+    }
     const h = line.match(/^\s*(#{1,3})\s+(.*)$/);
     if (h) { out.push('<div class="md-h md-h' + h[1].length + '">' + inline(h[2]) + '</div>'); i++; continue; }
     if (line.trim() === '') { i++; continue; }
